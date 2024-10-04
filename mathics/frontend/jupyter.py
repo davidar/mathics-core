@@ -1,6 +1,8 @@
 import json
+from typing import List
 
 from IPython.display import Code, HTML, JSON, Math
+from IPython.core.interactiveshell import InteractiveShell
 from IPython.core.magic import Magics, magics_class, line_cell_magic
 
 from mathics.session import MathicsSession
@@ -42,5 +44,10 @@ class MathicsMagic(Magics):
         return self.formatter.format_output(self.session.evaluation, expr)
 
 
-def load_ipython_extension(ipython):
+def transform_cell(lines: List[str]) -> List[str]:
+    return ["%%mathics3\n"] + lines
+
+
+def load_ipython_extension(ipython: InteractiveShell):
     ipython.register_magics(MathicsMagic)
+    ipython.input_transformers_cleanup.append(transform_cell)
