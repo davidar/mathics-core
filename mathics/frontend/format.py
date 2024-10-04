@@ -16,7 +16,6 @@ from mathics.core.systemsymbols import (
 )
 from mathics.session import get_settings_value
 
-from .graph import format_graph
 
 FORM_TO_FORMAT = {
     "System`MathMLForm": "xml",
@@ -99,6 +98,8 @@ class Formatter:
             )
             return self.math(eval_boxes(result, result.boxes_to_text, evaluation))
         elif expr_head is Symbol("Pymathics`Graph") and hasattr(expr, "G"):
+            from .graph import format_graph
+
             return self.svg(format_graph(expr.G))
         elif expr_head is SymbolCompiledFunction:
             result = expr.format(evaluation, SymbolOutputForm)
