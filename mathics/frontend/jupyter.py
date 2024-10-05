@@ -1,7 +1,6 @@
-import json
 from typing import List
 
-from IPython.display import Code, HTML, JSON, Math
+from IPython.display import display, Code, HTML, Javascript, Math
 from IPython.core.interactiveshell import InteractiveShell
 from IPython.core.magic import Magics, magics_class, line_cell_magic
 
@@ -18,7 +17,8 @@ class JupyterFormatter(Formatter):
         return Math(result)
 
     def graphics3d(self, result):
-        return JSON(json.loads(result))
+        # return JSON(json.loads(result))
+        return Javascript(f"drawGraphics3d(element, {result})")
 
     def svg(self, result):
         return self.html(result)
@@ -51,3 +51,10 @@ def transform_cell(lines: List[str]) -> List[str]:
 def load_ipython_extension(ipython: InteractiveShell):
     ipython.register_magics(MathicsMagic)
     ipython.input_transformers_cleanup.append(transform_cell)
+    display(Javascript("""
+        var script = document.createElement('script');
+        script.type = 'text/javascript';
+        script.src = 'https://cdn.jsdelivr.net/npm/@mathicsorg/mathics-threejs-backend';
+        document.head.appendChild(script);
+        console.log('Loading mathics-threejs-backend');
+    """))
