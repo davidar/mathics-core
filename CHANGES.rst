@@ -6,6 +6,7 @@ New Builtins
 ++++++++++++
 
 * ``CheckAbort``
+* ``FileNameDrop``
 * ``SetEnvironment``
 
 By `@davidar <https://github.com/davidar>`_:
