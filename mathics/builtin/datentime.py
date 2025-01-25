@@ -13,10 +13,11 @@ import re
 import sys
 import time
 from datetime import datetime, timedelta
+from typing import Optional
 
 import dateutil.parser
 
-from mathics.core.atoms import Integer, Real, String
+from mathics.core.atoms import Integer, MachineReal, Real, String
 from mathics.core.attributes import (
     A_HOLD_ALL,
     A_NO_ATTRIBUTES,
@@ -26,21 +27,19 @@ from mathics.core.attributes import (
 from mathics.core.builtin import Builtin, Predefined
 from mathics.core.convert.expression import to_expression, to_mathics_list
 from mathics.core.convert.python import from_python
-from mathics.core.element import ImmutableValueMixin
-from mathics.core.evaluation import (
-    Evaluation,
-    TimeoutInterrupt,
-    run_with_timeout_and_stack,
-)
+from mathics.core.element import BaseElement, ImmutableValueMixin
+from mathics.core.evaluation import Evaluation
 from mathics.core.expression import Expression
 from mathics.core.list import ListExpression
-from mathics.core.symbols import Symbol, SymbolNull
+from mathics.core.symbols import Symbol
 from mathics.core.systemsymbols import (
     SymbolAborted,
+    SymbolAbsoluteTime,
     SymbolAutomatic,
     SymbolInfinity,
     SymbolRowBox,
 )
+from mathics.eval.datetime import eval_timeconstrained, valid_time_from_expression
 from mathics.settings import TIME_12HOUR
 
 START_TIME = time.time()
@@ -109,11 +108,9 @@ if not hasattr(timedelta, "total_seconds"):
 else:
     total_seconds = timedelta.total_seconds
 
-SymbolAbsoluteTime = Symbol("AbsoluteTime")
 SymbolDateObject = Symbol("DateObject")
 SymbolDateString = Symbol("DateString")
 SymbolGregorian = Symbol("Gregorian")
-SymbolPause = Symbol("Pause")
 
 
 class _Date:
@@ -135,7 +132,7 @@ class _Date:
                 raise ValueError
             self.date = dateutil.parser.parse(datestr)
 
-    def addself(self, timevec):
+    def addself(self, timevec: tuple):
         years = self.date.year + timevec[0] + int((self.date.month + timevec[1]) / 12)
         months = (self.date.month + timevec[1]) % 12
         if months == 0:
@@ -154,7 +151,7 @@ class _Date:
         )
         self.date += tdelta
 
-    def to_list(self):
+    def to_list(self) -> list:
         return [
             self.date.year,
             self.date.month,
@@ -177,7 +174,7 @@ class _DateFormat(Builtin):
         r"^([0-9]{1,4})\s*([^0-9]*)\s*([0-9]{1,2})\s*\2\s*([0-9]{1,4})\s*"
     )
 
-    def parse_date_automatic(self, epochtime, etime, evaluation):
+    def parse_date_automatic(self, epochtime, etime, evaluation: Evaluation):
         m = _DateFormat.automatic.search(etime)
         if not m:
             return dateutil.parser.parse(etime)
@@ -216,7 +213,7 @@ class _DateFormat(Builtin):
 
         return date
 
-    def to_datelist(self, epochtime, evaluation):
+    def to_datelist(self, epochtime, evaluation: Evaluation):
         """Converts date-time 'epochtime' to datelist"""
         etime = epochtime.to_python()
 
@@ -379,12 +376,12 @@ class AbsoluteTime(_DateFormat):
 
     summary_text = "get absolute time in seconds"
 
-    def eval_now(self, evaluation):
+    def eval_now(self, evaluation: Evaluation) -> MachineReal:
         "AbsoluteTime[]"
 
         return Real(total_seconds(datetime.now() - EPOCH_START))
 
-    def eval_spec(self, epochtime, evaluation):
+    def eval_spec(self, epochtime, evaluation: Evaluation) -> Optional[MachineReal]:
         "AbsoluteTime[epochtime_]"
 
         datelist = self.to_datelist(epochtime, evaluation)
@@ -419,7 +416,7 @@ class AbsoluteTiming(Builtin):
 
     summary_text = "get total wall-clock time to run a Mathics command"
 
-    def eval(self, expr, evaluation):
+    def eval(self, expr: BaseElement, evaluation: Evaluation) -> ListExpression:
         "AbsoluteTiming[expr_]"
 
         start = time.time()
@@ -478,7 +475,13 @@ class DateDifference(Builtin):
 
     summary_text = "find the difference in days, weeks, etc. between two dates"
 
-    def eval(self, date1, date2, units, evaluation):
+    def eval(
+        self,
+        date1: BaseElement,
+        date2: BaseElement,
+        units: BaseElement,
+        evaluation: Evaluation,
+    ) -> Optional[BaseElement]:
         "DateDifference[date1_, date2_, units_]"
 
         # Process dates
@@ -626,7 +629,9 @@ class DateObject(_DateFormat, ImmutableValueMixin):
 
     summary_text = "get an object representing a date (year, hour, instant, ...)"
 
-    def eval_any(self, args, evaluation: Evaluation, options: dict):
+    def eval_any(
+        self, args: BaseElement, evaluation: Evaluation, options: dict
+    ) -> Optional[Expression]:
         "DateObject[args_, OptionsPattern[]]"
         datelist = None
         tz = None
@@ -684,7 +689,15 @@ class DateObject(_DateFormat, ImmutableValueMixin):
             fmt,
         )
 
-    def eval_makeboxes(self, datetime, gran, cal, tz, fmt, evaluation):
+    def eval_makeboxes(
+        self,
+        datetime: Expression,
+        gran: BaseElement,
+        cal: BaseElement,
+        tz: BaseElement,
+        fmt: BaseElement,
+        evaluation: Evaluation,
+    ) -> Optional[Expression]:
         "MakeBoxes[DateObject[datetime_List, gran_, cal_, tz_, fmt_], StandardForm|TraditionalForm|OutputForm]"
         # TODO:
         if fmt.sameQ(SymbolAutomatic):
@@ -742,7 +755,9 @@ class DatePlus(Builtin):
 
     summary_text = "add or subtract days, weeks, etc. in a date list or string"
 
-    def eval(self, date, off, evaluation):
+    def eval(
+        self, date: BaseElement, off: BaseElement, evaluation: Evaluation
+    ) -> Optional[Expression]:
         "DatePlus[date_, off_]"
 
         # Process date
@@ -852,7 +867,9 @@ class DateList(_DateFormat):
 
     summary_text = "date elements as numbers in {y,m,d,h,m,s} format"
 
-    def eval(self, epochtime, evaluation):
+    def eval(
+        self, epochtime: BaseElement, evaluation: Evaluation
+    ) -> Optional[ListExpression]:
         "%(name)s[epochtime_]"
         datelist = self.to_datelist(epochtime, evaluation)
 
@@ -919,7 +936,9 @@ class DateString(_DateFormat):
 
     summary_text = "current or specified date as a string in many possible formats"
 
-    def eval(self, epochtime, form, evaluation):
+    def eval(
+        self, epochtime: BaseElement, form: BaseElement, evaluation: Evaluation
+    ) -> Optional[String]:
         "DateString[epochtime_, form_]"
         datelist = self.to_datelist(epochtime, evaluation)
 
@@ -978,7 +997,7 @@ class DateStringFormat(Predefined):
 
     # TODO: Methods to change this
 
-    def evaluate(self, evaluation):
+    def evaluate(self, evaluation: Evaluation) -> ListExpression:
         return ListExpression(String(self.value))
 
 
@@ -1003,7 +1022,7 @@ class EasterSunday(Builtin):  # Calendar`EasterSunday
 
     summary_text = "find the date of Easter Sunday for a given year"
 
-    def eval(self, year, evaluation):
+    def eval(self, year: Integer, evaluation: Evaluation) -> ListExpression:
         "EasterSunday[year_Integer]"
         y = year.value
 
@@ -1024,39 +1043,6 @@ class EasterSunday(Builtin):  # Calendar`EasterSunday
         day = ((h + le - 7 * m + 114) % 31) + 1
 
         return ListExpression(year, Integer(month), Integer(day))
-
-
-class Pause(Builtin):
-    """
-    <url>:WMA link:https://reference.wolfram.com/language/ref/Pause.html</url>
-
-    <dl>
-    <dt>'Pause[n]'
-      <dd>pauses for $n$ seconds.
-    </dl>
-
-    >> Pause[0.5]
-    """
-
-    messages = {
-        "numnm": (
-            "Non-negative machine-sized number expected at " "position 1 in `1`."
-        ),
-    }
-
-    summary_text = "pause for a number of seconds"
-
-    def eval(self, n, evaluation):
-        "Pause[n_]"
-        sleeptime = n.to_python()
-        if not isinstance(sleeptime, (int, float)) or sleeptime < 0:
-            evaluation.message(
-                "Pause", "numnm", Expression(SymbolPause, from_python(n))
-            )
-            return
-
-        time.sleep(sleeptime)
-        return SymbolNull
 
 
 class SystemTimeZone(Predefined):
@@ -1080,7 +1066,7 @@ class SystemTimeZone(Predefined):
 
     summary_text = "get the time zone used by your system"
 
-    def evaluate(self, evaluation):
+    def evaluate(self, evaluation: Evaluation) -> MachineReal:
         return self.value
 
 
@@ -1099,81 +1085,73 @@ class Now(Predefined):
 
     summary_text = "get current date and time"
 
-    def evaluate(self, evaluation):
+    def evaluate(self, evaluation: Evaluation) -> Expression:
         return Expression(SymbolDateObject.evaluate(evaluation))
 
 
-if sys.platform != "win32" and not hasattr(sys, "pyston_version_info"):
+class TimeConstrained(Builtin):
+    """
+    <url>:WMA link:https://reference.wolfram.com/language/ref/TimeConstrained.html</url>
 
-    class TimeConstrained(Builtin):
-        """
-        <url>:WMA link:https://reference.wolfram.com/language/ref/TimeConstrained.html</url>
+    <dl>
+      <dt>'TimeConstrained[$expr$, $t$]'
+      <dd>'evaluates $expr$, stopping after $t$ seconds.'
 
-        <dl>
-          <dt>'TimeConstrained[$expr$, $t$]'
-          <dd>'evaluates $expr$, stopping after $t$ seconds.'
+      <dt>'TimeConstrained[$expr$, $t$, $failexpr$]'
+      <dd>'returns $failexpr$ if the time constraint is not met.'
+    </dl>
 
-          <dt>'TimeConstrained[$expr$, $t$, $failexpr$]'
-          <dd>'returns $failexpr$ if the time constraint is not met.'
-        </dl>
+    Possible issues: for certain time-consuming functions (like simplify)
+    which are based on sympy or other libraries, it is possible that
+    the evaluation continues after the timeout. However, at the end of the \
+    evaluation, the function will return '$Aborted' and the results will not affect
+    the state of the Mathics3 kernel.
 
-        Possible issues: for certain time-consuming functions (like simplify)
-        which are based on sympy or other libraries, it is possible that
-        the evaluation continues after the timeout. However, at the end of the \
-        evaluation, the function will return '$Aborted' and the results will not affect
-        the state of the Mathics3 kernel.
-        """
+    
+    ## >> TimeConstrained[Pause[5]; a, 1]
+    ##  = $Aborted
 
-        # FIXME: these tests sometimes cause SEGVs which probably means
-        # that TimeConstraint has bugs.
+    ## 'TimeConstrained' can be nested. In this case, the outer 'TimeConstrained' waits for \
+    ## 2 seconds that the inner sequence be executed. Inner expressions would take in \
+    ## sequence more than 3 seconds:
+    ## >> TimeConstrained[TimeConstrained[Pause[1]; Print["First Done"], 2];\
+    ##              TimeConstrained[Pause[5];Print["Second Done"],2,"inner"], \
+    ##              2, "outer"]
+    ## | First Done
+    ## = outer
+    """
 
-        # Consider testing via unit tests.
-        # >> TimeConstrained[Integrate[Sin[x]^1000000,x],1]
-        # = $Aborted
+    attributes = A_HOLD_ALL | A_PROTECTED
+    messages = {
+        "timc": (
+            "Number of seconds `1` is not a positive machine-sized number "
+            "or Infinity."
+        ),
+    }
+    if sys.platform == "emscripten":
+        messages.update({"tcns": f"TimeConstrained is not supported in {sys.platform}"})
 
-        # >> TimeConstrained[Integrate[Sin[x]^1000000,x], 1, Integrate[Cos[x],x]]
-        # = Sin[x]
+    summary_text = "run a command for at most a specified time"
 
-        # >> s=TimeConstrained[Integrate[Sin[x] ^ 3, x], a]
-        #  : Number of seconds a is not a positive machine-sized number or Infinity.
-        #  = TimeConstrained[Integrate[Sin[x] ^ 3, x], a]
+    def eval_with_timeout(self, expr, t, evaluation) -> Optional[BaseElement]:
+        "TimeConstrained[expr_, t_]"
+        try:
+            timeout = valid_time_from_expression(t, evaluation)
+        except ValueError:
+            evaluation.message("TimeConstrained", "timc", t)
+            return
+        return eval_timeconstrained(expr, timeout, SymbolAborted, evaluation)
 
-        # >> a=1; s
-        # =  Cos[x] (-5 + Cos[2 x]) / 6
-
-        attributes = A_HOLD_ALL | A_PROTECTED
-        messages = {
-            "timc": (
-                "Number of seconds `1` is not a positive machine-sized number "
-                "or Infinity."
-            ),
-        }
-
-        summary_text = "run a command for at most a specified time"
-
-        def eval_2(self, expr, t, evaluation):
-            "TimeConstrained[expr_, t_]"
-            return self.eval_3(expr, t, SymbolAborted, evaluation)
-
-        def eval_3(self, expr, t, failexpr, evaluation):
-            "TimeConstrained[expr_, t_, failexpr_]"
-            t = t.evaluate(evaluation)
-            if not t.is_numeric(evaluation):
-                evaluation.message("TimeConstrained", "timc", t)
-                return
-            try:
-                t = float(t.to_python())
-                evaluation.timeout_queue.append((t, datetime.now().timestamp()))
-                request = lambda: expr.evaluate(evaluation)
-                res = run_with_timeout_and_stack(request, t, evaluation)
-            except TimeoutInterrupt:
-                evaluation.timeout_queue.pop()
-                return failexpr.evaluate(evaluation)
-            except Exception:
-                evaluation.timeout_queue.pop()
-                raise
-            evaluation.timeout_queue.pop()
-            return res
+    def eval_with_timeout_and_failexpr(
+        self, expr, t, failexpr, evaluation
+    ) -> Optional[BaseElement]:
+        "TimeConstrained[expr_, t_, failexpr_]"
+        try:
+            timeout = valid_time_from_expression(t, evaluation)
+        except ValueError:
+            evaluation.message("TimeConstrained", "timc", t)
+            return
+        return eval_timeconstrained(expr, timeout, failexpr, evaluation)
 
 
 class TimeZone(Predefined):
@@ -1201,13 +1179,7 @@ class TimeZone(Predefined):
 
     summary_text = "gets the default time zone"
 
-    def eval(self, lhs, rhs, evaluation):
-        "lhs_ = rhs_"
-
-        self.assign(lhs, rhs, evaluation)
-        return rhs
-
-    def evaluate(self, evaluation) -> Real:
+    def evaluate(self, evaluation: Evaluation) -> MachineReal:
         return self.value
 
 
@@ -1228,7 +1200,7 @@ class TimeUsed(Builtin):
         "get the total number of seconds of CPU time in the current Mathics3 session"
     )
 
-    def eval(self, evaluation):
+    def eval(self, evaluation: Evaluation) -> MachineReal:
         "TimeUsed[]"
         # time.process_time() is better than
         # time.clock(). See https://bugs.python.org/issue31803
@@ -1256,7 +1228,7 @@ class Timing(Builtin):
 
     summary_text = "get CPU time to run a Mathics3 command"
 
-    def eval(self, expr, evaluation):
+    def eval(self, expr: BaseElement, evaluation: Evaluation) -> ListExpression:
         "Timing[expr_]"
 
         start = time.process_time()
@@ -1284,7 +1256,7 @@ class SessionTime(Builtin):
         "get total elapsed time in seconds since the beginning of Mathics3 session"
     )
 
-    def eval(self, evaluation):
+    def eval(self, evaluation: Evaluation) -> MachineReal:
         "SessionTime[]"
         return Real(time.time() - START_TIME)
 
@@ -1315,7 +1287,7 @@ class TimeRemaining(Builtin):
 
     summary_text = "get remaining time in allowed to run an expression"
 
-    def eval(self, evaluation):
+    def eval(self, evaluation: Evaluation) -> BaseElement:
         "TimeRemaining[]"
         if len(evaluation.timeout_queue) > 0:
             t, start_time = evaluation.timeout_queue[-1]

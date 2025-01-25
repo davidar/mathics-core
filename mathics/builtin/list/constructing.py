@@ -8,10 +8,12 @@ Functions for constructing lists of various sizes and structure.
 See also Constructing Vectors.
 """
 
+import typing
 from itertools import permutations
+from typing import Optional, Tuple
 
 from mathics.builtin.box.layout import RowBox
-from mathics.core.atoms import Integer, is_integer_rational_or_real
+from mathics.core.atoms import Integer, Integer1, is_integer_rational_or_real
 from mathics.core.attributes import A_HOLD_FIRST, A_LISTABLE, A_LOCKED, A_PROTECTED
 from mathics.core.builtin import BasePattern, Builtin, IterationFunction
 from mathics.core.convert.expression import to_expression
@@ -20,8 +22,8 @@ from mathics.core.element import ElementsProperties
 from mathics.core.evaluation import Evaluation
 from mathics.core.expression import Expression, structure
 from mathics.core.list import ListExpression
-from mathics.core.symbols import Atom
-from mathics.core.systemsymbols import SymbolNormal
+from mathics.core.symbols import Atom, Symbol
+from mathics.core.systemsymbols import SymbolNormal, SymbolTuples
 from mathics.eval.lists import get_tuples, list_boxes
 
 
@@ -154,7 +156,7 @@ class List(Builtin):
     attributes = A_LOCKED | A_PROTECTED
     summary_text = "form a list"
 
-    def eval(self, elements, evaluation):
+    def eval(self, elements, evaluation: Evaluation):
         """List[elements___]"""
         # Pick out the elements part of the parameter elements;
         # we we will call that `elements_part_of_elements__`.
@@ -182,14 +184,23 @@ class Normal(Builtin):
       <dd> Brings special expressions to a normal expression from different special \
            forms.
     </dl>
+
+    >> Normal[Pi]
+     = Pi
+    >> Series[Exp[x], {x, 0, 5}]
+     = 1 + x + 1 / 2 x ^ 2 + 1 / 6 x ^ 3 + 1 / 24 x ^ 4 + 1 / 120 x ^ 5 + O[x] ^ 6
+    >> Normal[%]
+     = 1 + x + x ^ 2 / 2 + x ^ 3 / 6 + x ^ 4 / 24 + x ^ 5 / 120
     """
 
     summary_text = "convert objects to normal expressions"
 
-    def eval_general(self, expr, evaluation: Evaluation):
+    def eval_general(self, expr: Expression, evaluation: Evaluation):
         "Normal[expr_]"
         if isinstance(expr, Atom):
-            return
+            return expr
+        if expr.has_form("RootSum", 2):
+            return from_sympy(expr.to_sympy().doit(roots=True))
         return Expression(
             expr.get_head(),
             *[Expression(SymbolNormal, element) for element in expr.elements],
@@ -268,9 +279,9 @@ class Range(Builtin):
             and isinstance(di, Integer)
         ):
             pm = 1 if di.value >= 0 else -1
-            result = [Integer(i) for i in range(imin.value, imax.value + pm, di.value)]
             return ListExpression(
-                *result, elements_properties=range_list_elements_properties
+                *[Integer(i) for i in range(imin.value, imax.value + pm, di.value)],
+                elements_properties=range_list_elements_properties,
             )
 
         imin = imin.to_sympy()
@@ -344,7 +355,7 @@ class Permutations(Builtin):
     def eval_n(self, li, n, evaluation: Evaluation):
         "Permutations[li_List, n_]"
 
-        rs = None
+        rs: Optional[Tuple[int, ...]] = None
         if isinstance(n, Integer):
             py_n = min(n.get_int_value(), len(li.elements))
         elif n.has_form("List", 1) and isinstance(n.elements[0], Integer):
@@ -359,12 +370,12 @@ class Permutations(Builtin):
 
         if py_n is None or py_n < 0:
             evaluation.message(
-                self.get_name(), "nninfseq", Expression(self.get_name(), li, n)
+                self.get_name(), "nninfseq", Expression(Symbol(self.get_name()), li, n)
             )
             return
 
         if rs is None:
-            rs = range(py_n + 1)
+            rs = tuple(range(py_n + 1))
 
         inner = structure("List", li, evaluation)
         outer = structure("List", inner, evaluation)
@@ -431,12 +442,15 @@ class Reap(Builtin):
         "Reap[expr_, {patterns___}, f_]"
 
         patterns = patterns.get_sequence()
-        sown = [(BasePattern.create(pattern), []) for pattern in patterns]
+        sown: typing.List[typing.Tuple[BasePattern, list]] = [
+            (BasePattern.create(pattern, evaluation=evaluation), [])
+            for pattern in patterns
+        ]
 
         def listener(e, tag):
             result = False
             for pattern, items in sown:
-                if pattern.does_match(tag, evaluation):
+                if pattern.does_match(tag, {"evaluation": evaluation}):
                     for item in items:
                         if item[0].sameQ(tag):
                             item[1].append(e)
@@ -450,7 +464,7 @@ class Reap(Builtin):
         try:
             result = expr.evaluate(evaluation)
             items = []
-            for pattern, tags in sown:
+            for _, tags in sown:
                 list_of_elements = []
                 for tag, elements in tags:
                     list_of_elements.append(
@@ -494,7 +508,7 @@ class Sow(Builtin):
 
 
 class Table(IterationFunction):
-    """
+    r"""
     <url>
     :WMA link:
     https://reference.wolfram.com/language/ref/Table.html</url>
@@ -507,11 +521,11 @@ class Table(IterationFunction):
       <dd>generates a list of the values of expr when $i$ runs from 1 to $n$.
 
       <dt>'Table[$expr$, {$i$, $start$, $stop$, $step$}]'
-      <dd>evaluates $expr$ with $i$ ranging from $start$ to $stop$,
+      <dd>evaluates $expr$ with $i$ ranging from $start$ to $stop$, \
         incrementing by $step$.
 
       <dt>'Table[$expr$, {$i$, {$e1$, $e2$, ..., $ei$}}]'
-      <dd>evaluates $expr$ with $i$ taking on the values $e1$, $e2$,
+      <dd>evaluates $expr$ with $i$ taking on the values $e1$, $e2$, \
         ..., $ei$.
     </dl>
 
@@ -519,6 +533,7 @@ class Table(IterationFunction):
      = {x, x, x}
     >> n = 0; Table[n = n + 1, {5}]
      = {1, 2, 3, 4, 5}
+    #> Clear[n]
     >> Table[i, {i, 4}]
      = {1, 2, 3, 4}
     >> Table[i, {i, 2, 5}]
@@ -533,6 +548,14 @@ class Table(IterationFunction):
     'Table' supports multi-dimensional tables:
     >> Table[{i, j}, {i, {a, b}}, {j, 1, 2}]
      = {{{a, 1}, {a, 2}}, {{b, 1}, {b, 2}}}
+
+    Symbolic bounds:
+    >> Table[x, {x, a, a + 5 n, n}]
+     = {a, a + n, a + 2 n, a + 3 n, a + 4 n, a + 5 n}
+
+    The lower bound is always included even for large step sizes:
+    >> Table[i, {i, 1, 9, Infinity}]
+     = {1}
     """
 
     rules = {
@@ -584,7 +607,7 @@ class Tuples(Builtin):
         "Tuples[expr_, n_Integer]"
 
         if isinstance(expr, Atom):
-            evaluation.message("Tuples", "normal")
+            evaluation.message("Tuples", "normal", Integer1, Expression(expr, n))
             return
         py_n = n.value
         if py_n is None or py_n < 0:
@@ -610,10 +633,12 @@ class Tuples(Builtin):
 
         exprs = exprs.get_sequence()
         items = []
-        for expr in exprs:
+        for i, expr in enumerate(exprs):
             evaluation.check_stopped()
             if isinstance(expr, Atom):
-                evaluation.message("Tuples", "normal")
+                evaluation.message(
+                    "Tuples", "normal", Integer(i + 1), Expression(SymbolTuples)
+                )
                 return
             items.append(expr.elements)
 

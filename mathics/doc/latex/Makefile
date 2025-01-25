@@ -6,11 +6,11 @@ LATEXMK ?= latexmk
 BASH ?= /bin/bash
 #-quiet
 
-# Location of Python Pickle file containg doctest tests and test results formatted for LaTeX
+# Location of Python Pickle file containing doctest tests and test results formatted for LaTeX
 DOCTEST_LATEX_DATA_PCL ?= $(HOME)/.local/var/mathics/doctest_latex_data.pcl
 
 # Variable indicating Mathics3 Modules you have available on your system, in latex2doc option format
-MATHICS3_MODULE_OPTION ?=--load-module pymathics.graph,pymathics.natlang
+MATHICS3_MODULE_OPTION ?=--load-module pymathics.trepan,pymathics.graph,pymathics.natlang
 
 #: Default target: Make everything
 all doc texdoc: mathics.pdf
@@ -19,8 +19,14 @@ all doc texdoc: mathics.pdf
 doc-data $(DOCTEST_LATEX_DATA_PCL):
 	(cd ../.. && MATHICS_CHARACTER_ENCODING="UTF-8" $(PYTHON) docpipeline.py --output --keep-going $(MATHICS3_MODULE_OPTION))
 
-#: Build mathics PDF
-mathics.pdf: mathics.tex documentation.tex logo-text-nodrop.pdf logo-heptatom.pdf version-info.tex $(DOCTEST_LATEX_DATA_PCL)
+mathics-title.pdf:
+	cp mathics-title.pdf-src mathics-title.pdf
+
+#: Build somewhat incomplete mathics DVI
+mathics.dvi: mathics.tex documentation.tex
+	$(LATEXMK) -dvi -f --verbose mathics
+
+mathics.pdf: mathics.tex documentation.tex mathics-title.pdf logo-text-nodrop.pdf logo-heptatom.pdf version-info.tex $(DOCTEST_LATEX_DATA_PCL)
 	$(LATEXMK) --verbose -f -pdf -pdflatex="$(XETEX) -halt-on-error" mathics
 
 #: File containing version information
@@ -48,7 +54,7 @@ clean:
 	rm -f mathics.asy mathics.aux mathics.idx mathics.log mathics.mtc mathics.mtc* mathics.out mathics.toc || true
 	rm -f test-mathics.aux test-mathics.idx test-mathics.log test-mathics.mtc test-mathics.mtc* test-mathics.out test-mathics.toc || true
 	rm -f mathics.fdb_latexmk mathics.ilg mathics.ind mathics.maf mathics.pre || true
-	rm -f mathics-*.* || true
+	rm -f mathics-*.??? || true
 	rm -f mathics-test.asy mathics-test.aux mathics-test.idx mathics-test.log mathics-test.mtc mathicsest.mtc* mathics-test.out mathics-test.toc || true
 	rm -f documentation.tex $(DOCTEST_LATEX_DATA_PCL) || true
 	rm -f mathics.pdf mathics.dvi test-mathics.pdf test-mathics.dvi || true

@@ -10,7 +10,6 @@ from typing import Optional
 
 import sympy
 
-from mathics.builtin.inference import get_assumptions_list
 from mathics.builtin.numeric import Abs
 from mathics.builtin.scoping import dynamic_scoping
 from mathics.core.atoms import (
@@ -71,8 +70,9 @@ from mathics.core.systemsymbols import (
     SymbolTable,
     SymbolUndefined,
 )
-from mathics.eval.arithmetic import eval_Sign
+from mathics.eval.inference import get_assumptions_list
 from mathics.eval.nevaluator import eval_N
+from mathics.eval.numeric import eval_Sign
 
 # This tells documentation how to sort this module
 sort_order = "mathics.builtin.mathematical-functions"
@@ -122,15 +122,15 @@ class Arg(MPMathFunction):
      >> Arg[-3]
       = Pi
 
-     Same as above using sympy's method:
+     Same as above, but using SymPy's method:
      >> Arg[-3, Method->"sympy"]
       = Pi
 
     >> Arg[1-I]
      = -Pi / 4
 
-    Arg evaluate the direction of DirectedInfinity quantities by
-    the Arg of they arguments:
+    'Arg' evaluates the direction of 'DirectedInfinity' quantities by \
+    the 'Arg' of its arguments:
     >> Arg[DirectedInfinity[1+I]]
      = Pi / 4
     >> Arg[DirectedInfinity[]]
@@ -627,7 +627,7 @@ class I_(Predefined, SympyObject):
     name = "I"
     sympy_name = "I"
     sympy_obj = sympy.I
-    summary_text = "imaginary unit"
+    summary_text = "imaginary unit number Sqrt[-1]"
     python_equivalent = 1j
 
     def is_constant(self) -> bool:
@@ -658,7 +658,7 @@ class Im(SympyFunction):
      = -Graphics-
     """
 
-    summary_text = "imaginary part"
+    summary_text = "imaginary part of a complex number"
     attributes = A_LISTABLE | A_NUMERIC_FUNCTION | A_PROTECTED
 
     def eval_complex(self, number, evaluation: Evaluation):
@@ -817,9 +817,13 @@ class Re(SympyFunction):
      = -Graphics-
     """
 
-    summary_text = "real part"
+    summary_text = "real part of a complex number"
     attributes = A_LISTABLE | A_NUMERIC_FUNCTION | A_PROTECTED
     sympy_name = "re"
+
+    def eval(self, number, evaluation: Evaluation):
+        "Re[number_]"
+        return from_sympy(sympy.re(number.to_sympy().expand(complex=True)))
 
     def eval_complex(self, number, evaluation: Evaluation):
         "Re[number_Complex]"
@@ -830,10 +834,6 @@ class Re(SympyFunction):
         "Re[number_?NumberQ]"
 
         return number
-
-    def eval(self, number, evaluation: Evaluation):
-        "Re[number_]"
-        return from_sympy(sympy.re(number.to_sympy().expand(complex=True)))
 
 
 class Real_(Builtin):
@@ -959,6 +959,14 @@ class Sum(IterationFunction, SympyFunction):
     Verify algebraic identities:
     >> Sum[x ^ 2, {x, 1, y}] - y * (y + 1) * (2 * y + 1) / 6
      = 0
+
+    Non-integer bounds:
+    >> Sum[i, {i, 1, 2.5}]
+     = 3
+    >> Sum[i, {i, 1.1, 2.5}]
+     = 3.2
+    >> Sum[k, {k, I, I + 1.5}]
+     = 1 + 2 I
     """
 
     summary_text = "discrete sum"
@@ -979,8 +987,8 @@ class Sum(IterationFunction, SympyFunction):
         }
     )
 
-    def get_result(self, items):
-        return Expression(SymbolPlus, *items)
+    def get_result(self, elements) -> Expression:
+        return Expression(SymbolPlus, *elements)
 
     def to_sympy(self, expr, **kwargs) -> Optional[SympyExpression]:
         """
@@ -1020,7 +1028,11 @@ class Sum(IterationFunction, SympyFunction):
                 # If we have integer bounds, we'll use Mathics's iterator Sum
                 # (which is Plus)
 
-                if all(hasattr(i, "is_integer") and i.is_integer for i in bounds[1:]):
+                if all(
+                    (hasattr(i, "is_integer") and i.is_integer)
+                    or (hasattr(i, "is_finite") and i.is_finite and i.is_constant())
+                    for i in bounds[1:]
+                ):
                     # When we have integer bounds, it is better to not use Sympy but
                     # use Mathics evaluation. We turn:
                     # Sum[f[x], {<limits>}] into
@@ -1029,9 +1041,10 @@ class Sum(IterationFunction, SympyFunction):
                     values = Expression(SymbolTable, *expr.elements).evaluate(
                         evaluation
                     )
-                    ret = self.get_result(values.elements).evaluate(evaluation)
-                    # Make sure to convert the result back to sympy.
-                    return ret.to_sympy()
+                    if values.get_head_name() != SymbolTable.get_name():
+                        ret = self.get_result(values.elements).evaluate(evaluation)
+                        # Make sure to convert the result back to sympy.
+                        return ret.to_sympy()
 
             if None not in bounds:
                 return sympy.summation(f_sympy, bounds)

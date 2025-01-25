@@ -14,15 +14,17 @@ biology to computer science, etc.
 
 from itertools import combinations
 
-from mathics.core.atoms import Integer
+from mathics.core.atoms import Integer, Integer1
 from mathics.core.attributes import (
     A_LISTABLE,
+    A_N_HOLD_FIRST,
     A_NUMERIC_FUNCTION,
     A_ORDERLESS,
     A_PROTECTED,
     A_READ_PROTECTED,
 )
 from mathics.core.builtin import Builtin, MPMathFunction, SympyFunction
+from mathics.core.evaluation import Evaluation
 from mathics.core.expression import Expression
 from mathics.core.list import ListExpression
 from mathics.core.symbols import (
@@ -37,6 +39,36 @@ from mathics.core.symbols import (
 
 SymbolBinomial = Symbol("Binomial")
 SymbolSubsets = Symbol("Subsets")
+
+
+class BellB(SympyFunction):
+    """
+    <url>
+    :Bell number: https://en.wikipedia.org/wiki/Bell_number</url> (<url>
+    :SymPy: https://docs.sympy.org/latest/modules/functions/combinatorial.html#sympy.functions.combinatorial.numbers.bell</url>, <url>
+    :WMA: https://reference.wolfram.com/language/ref/BellB.html</url>)
+    <dl>
+      <dt>'BellB[$n$]'
+      <dd>Bell number $B$_$n$.
+
+      <dt>'BellB[$n$, $x$]'
+      <dd>Bell polynomial $B$_$n$($x$).
+    </dl>
+
+    >> BellB[10]
+     = 115975
+
+    >> BellB[5, x]
+     = x + 15 x ^ 2 + 25 x ^ 3 + 10 x ^ 4 + x ^ 5
+    """
+
+    attributes = A_LISTABLE | A_N_HOLD_FIRST | A_PROTECTED | A_READ_PROTECTED
+    summary_text = "Bell numbers"
+    sympy_name = "bell"
+
+    def eval(self, z, evaluation: Evaluation):
+        "%(name)s[z__]"
+        return super().eval(z, evaluation)
 
 
 class _BooleanDissimilarity(Builtin):
@@ -184,6 +216,41 @@ class DiceDissimilarity(_BooleanDissimilarity):
         )
 
 
+class EulerE(SympyFunction):
+    """
+    <url>
+    :Euler numbers: https://en.wikipedia.org/wiki/Euler_numbers</url> (<url>
+    :SymPy: https://docs.sympy.org/latest/modules/functions/combinatorial.html#sympy.functions.combinatorial.numbers.euler</url>, <url>
+    :WMA: https://reference.wolfram.com/language/ref/EulerE.html</url>)
+    <dl>
+      <dt>'EulerE[$n$]'
+      <dd>Euler number $E$_$n$.
+
+      <dt>'EulerE[$n$, $x$]'
+      <dd>Euler polynomial $E$_$n$($x$).
+    </dl>
+
+    Odd-index Euler numbers are zero:
+    >> Table[EulerE[k], {k, 1, 9, 2}]
+     = {0, 0, 0, 0, 0}
+
+    Even-index Euler numbers alternate in sign:
+    >> Table[EulerE[k], {k, 0, 8, 2}]
+     = {1, -1, 5, -61, 1385}
+
+    >> EulerE[5, z]
+     = -1 / 2 + 5 z ^ 2 / 2 - 5 z ^ 4 / 2 + z ^ 5
+    """
+
+    attributes = A_LISTABLE | A_PROTECTED
+    summary_text = "Euler numbers"
+    sympy_name = "euler"
+
+    def eval(self, z, evaluation: Evaluation):
+        "%(name)s[z__]"
+        return super().eval(z, evaluation)
+
+
 class JaccardDissimilarity(_BooleanDissimilarity):
     """
     <url>
@@ -212,6 +279,51 @@ class JaccardDissimilarity(_BooleanDissimilarity):
         return Expression(
             SymbolDivide, Integer(c_tf + c_ft), Integer(c_tt + c_ft + c_tf)
         )
+
+
+class LucasL(SympyFunction):
+    """
+    <url>
+    :Lucas Number:
+    https://en.wikipedia.org/wiki/Lucas_number</url> (<url>
+    :SymPy:
+    https://docs.sympy.org/latest/modules/functions/combinatorial.html#sympy.functions.combinatorial.numbers.lucas</url>, \
+    <url>
+    :WMA:
+    https://reference.wolfram.com/language/ref/LucasL.html</url>)
+
+    <dl>
+      <dt>'LucasL[$n$]'
+      <dd>gives the $n$th Lucas number.
+
+      <dt>'LucasL[$n$, $x$]'
+      <dd>gives the $n$th Lucas polynomical $L$_($x$).
+    </dl>
+
+    A list of the first five Lucas numbers:
+    >> Table[LucasL[n], {n, 1, 5}]
+     = {1, 3, 4, 7, 11}
+
+    >> Series[LucasL[1/2, x], {x, 0, 5}]
+     = 1 + 1 / 4 x + 1 / 32 x ^ 2 + (-1 / 128) x ^ 3 + (-5 / 2048) x ^ 4 + 7 / 8192 x ^ 5 + O[x] ^ 6
+
+    >> Plot[LucasL[1/2, x], {x, -5, 5}]
+     = -Graphics-
+    """
+
+    attributes = A_LISTABLE | A_NUMERIC_FUNCTION | A_PROTECTED | A_READ_PROTECTED
+
+    sympy_name = "lucas"
+    summary_text = "get a Lucas number or polynomial"
+
+    rules = {
+        "LucasL[n_, 1]": "LucasL[n]",
+        "LucasL[n_, x_]": "(x/2 + Sqrt[1 + x^2 / 4])^n + Cos[n Pi] / (x/2 + Sqrt[1 + x^2 / 4])^n // Simplify",
+    }
+
+    def eval_integer(self, n: Integer, evaluation):
+        "LucasL[n_Integer]"
+        return self.eval(n, evaluation)
 
 
 class MatchingDissimilarity(_BooleanDissimilarity):
@@ -274,6 +386,47 @@ class Multinomial(Builtin):
                 Expression(SymbolBinomial, Expression(SymbolPlus, *total), value)
             )
         return Expression(SymbolTimes, *elements)
+
+
+class PolygonalNumber(Builtin):
+    """
+    <url>
+    :Polygonal number: https://en.wikipedia.org/wiki/Polygonal_number</url> (<url>
+    :WMA: https://reference.wolfram.com/language/ref/PolygonalNumber.html</url>)
+    <dl>
+      <dt>'PolygonalNumber[$n$]'
+      <dd>gives the $n$th triangular number.
+
+      <dt>'PolygonalNumber[$r$, $n$]'
+      <dd>gives the $n$th $r$-gonal number.
+    </dl>
+
+    >> Table[PolygonalNumber[n], {n, 10}]
+     = {1, 3, 6, 10, 15, 21, 28, 36, 45, 55}
+
+    The sum of two consecutive Polygonal numbers is the square of the larger number:
+    >> Table[PolygonalNumber[n-1] + PolygonalNumber[n], {n, 10}]
+     = {1, 4, 9, 16, 25, 36, 49, 64, 81, 100}
+
+    'PolygonalNumber'[$r$, $n$] can be interpreted as the number of points arranged in the form of $n$-1 polygons of $r$ sides.
+
+    List the tenth $r-gonal number of regular polygons from 3 to 8:
+    >> Table[PolygonalNumber[r, 10], {r, 3, 8}]
+     = {55, 100, 145, 190, 235, 280}
+
+    See also <url>
+    :Binomial:
+    doc/reference-of-built-in-symbols/integer-functions/combinatorial-functions/binomial/</url>, and <url>
+    :RegularPolygon:
+    doc/reference-of-built-in-symbols/drawing-graphics/regularpolygon/</url>.
+    """
+
+    attributes = A_LISTABLE | A_NUMERIC_FUNCTION | A_PROTECTED | A_READ_PROTECTED
+    rules = {
+        "PolygonalNumber[n_Integer]": "PolygonalNumber[3, n]",
+        "PolygonalNumber[r_Integer, n_Integer]": "(1/2) n (n (r - 2) - r + 4)",
+    }
+    summary_text = "get polygonal number"
 
 
 class RogersTanimotoDissimilarity(_BooleanDissimilarity):
@@ -411,7 +564,6 @@ class Subsets(Builtin):
 
     messages = {
         "nninfseq": "Position 2 of `1` must be All, Infinity, a non-negative integer, or a List whose first element (required) is a non-negative integer, second element (optional) is a non-negative integer or Infinity, and third element (optional) is a nonzero integer.",
-        "normal": "Nonatomic expression expected at position 1 in `1`.",
     }
 
     rules = {
@@ -424,7 +576,9 @@ class Subsets(Builtin):
         "Subsets[list_]"
 
         if isinstance(list, Atom):
-            evaluation.message("Subsets", "normal", Expression(SymbolSubsets, list))
+            evaluation.message(
+                "Subsets", "normal", Integer1, Expression(SymbolSubsets, list)
+            )
         else:
             return self.eval_list_n(list, Integer(len(list.elements)), evaluation)
 
@@ -433,7 +587,7 @@ class Subsets(Builtin):
 
         expr = Expression(SymbolSubsets, list, n)
         if isinstance(list, Atom):
-            evaluation.message("Subsets", "normal", expr)
+            evaluation.message("Subsets", "normal", Integer1, expr)
             return
         else:
             head_t = list.head
@@ -459,7 +613,7 @@ class Subsets(Builtin):
         expr = Expression(SymbolSubsets, list, n)
 
         if isinstance(list, Atom):
-            evaluation.message("Subsets", "normal", expr)
+            evaluation.message("Subsets", "normal", Integer1, expr)
             return
         else:
             head_t = list.head
@@ -538,7 +692,7 @@ class Subsets(Builtin):
         "Subsets[list_?AtomQ, Pattern[n,_List|All|DirectedInfinity[1]], spec_]"
 
         evaluation.message(
-            "Subsets", "normal", Expression(SymbolSubsets, list, n, spec)
+            "Subsets", "normal", Integer1, Expression(SymbolSubsets, list, n, spec)
         )
 
 

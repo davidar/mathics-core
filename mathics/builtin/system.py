@@ -10,6 +10,8 @@ import platform
 import subprocess
 import sys
 
+from pympler.asizeof import asizeof
+
 from mathics import version_string
 from mathics.core.atoms import Integer, Integer0, IntegerM1, Real, String
 from mathics.core.attributes import A_CONSTANT
@@ -18,6 +20,7 @@ from mathics.core.convert.expression import to_mathics_list
 from mathics.core.evaluation import Evaluation
 from mathics.core.expression import Expression
 from mathics.core.list import ListExpression
+from mathics.core.symbols import SymbolNull
 from mathics.core.systemsymbols import (
     SymbolFailed,
     SymbolNone,
@@ -36,99 +39,45 @@ else:
 sort_order = "mathics.builtin.global-system-information"
 
 
-class MaxLengthIntStringConversion(Predefined):
-    """
-    <url>:Python 3.11 Integer string conversion length limitation:
-    https://docs.python.org/3.11/library/stdtypes.html#int-max-str-digits</url>
+class Breakpoint(Builtin):
+    """<url>:Python breakpoint():https://docs.python.org/3/library/functions.html#breakpoint</url>
+
     <dl>
-      <dt>'$MaxLengthIntStringConversion'
-      <dd>A positive system integer that fixes the largest size of the string that \
-          can appear when converting an 'Integer' value into a 'String'. When the \
-          string value is too large, then the middle of the integer contains \
-          an indication of the number of digits elided inside << >>.
+      <dt>'Breakpoint[]'
+      <dd> Invoke a Python breakpoint.
 
-          If '$MaxLengthIntStringConversion' is set to 0, there is no \
-          bound. Aside from 0, 640 is the smallest value allowed.
+      This can be used for debugging the Mathics3 implementation, but \
+      if you are familiar with Python, it might assist in debugging a Mathics3 programs \
+      as well.
 
-          The initial value can be set via environment variable \
-          'DEFAULT_MAX_STR_DIGITS'. If that is not set, \
-          the default value is 7000.
+      By default, the Python debugger ('pdb') is loaded. For loading other debuggers, \
+      change the environment variable 'PYTHONBREAKPOINT'.
     </dl>
 
-    Although Mathics3 can represent integers of arbitrary size, when it formats \
-    the value for display, there can be nonlinear behavior in printing the decimal string \
-    or converting it to a 'String'.
 
-    Python, in version 3.11 and up, puts a default limit on the size of \
-    the number of digits allows when converting a large integer into \
-    a string.
+    Mathics3 code includes a breakpoint handler function, 'mathics.disabled_breakpoint' which \
+    reports whether 'Breakpoint[]' was encountered in Mathics3, or 'breakpoint()' was encountered \
+    in the Mathics3 source code. In contrast to 'pdb', 'trepan3k' and other handlers, this breakpoint \
+    handler does not stop inside, it just reports.
 
-    Show the default value of '$MaxLengthIntStringConversion':
-    >> $MaxLengthIntStringConversion
-     = ...
+    Here is how to use 'mathics.disabled_breakpoint':
 
-    500! is a 1135-digit number:
-    >> 500! //ToString//StringLength
-     = ...
+    >> SetEnvironment["PYTHONBREAKPOINT" -> "mathics.disabled_breakpoint"];
 
-    We first set '$MaxLengthIntStringConversion' to the smallest value allowed, \
-    so that we can see the truncation of digits in the middle:
-    >> $MaxLengthIntStringConversion = 640
-    ## Pyston 2.3.5 returns 0 while CPython returns 640
-    ## Therefore output testing below is generic.
-     = ...
+    >> Breakpoint[]
+    = Hit disabled breakpoint.
+    = Breakpoint[]
 
-    Note that setting '$MaxLengthIntStringConversion' has an effect only on Python 3.11 and later;
-    Pyston 2.x however ignores this.
-
-    Now when we print the string value of 500! and Pyston 2.x is not used, \
-    the middle digits are removed:
-    >> 500!
-     = ...
-
-    To see this easier, manipulate the result as 'String':
-
-    >> bigFactorial = ToString[500!]; StringTake[bigFactorial, {310, 330}]
-     = ...
-
-    The <<501>> indicates that 501 digits have been omitted in the string conversion.
-
-    Other than 0, an 'Integer' value less than 640 is not accepted:
-    >> $MaxLengthIntStringConversion = 10
-     : 10 is not 0 or an Integer value greater than 640.
-     = ...
+    The environment variable 'PYTHONBREAKPOINT' can be changed at runtime to switch \
+    'breakpoint()' and 'Breakpoint[]' behavior.
     """
 
-    attributes = A_CONSTANT
-    messages = {"inv": "`1` is not 0 or an Integer value greater than 640."}
-    name = "$MaxLengthIntStringConversion"
-    summary_text = "the maximum length for which an integer is converted to a String"
+    summary_text = "invoke Python breakpoint()"
 
-    def evaluate(self, evaluation: Evaluation) -> Integer:
-        try:
-            return Integer(sys.get_int_max_str_digits())
-        except AttributeError:
-            return Integer0
+    def eval(self, evaluation: Evaluation):
+        "Breakpoint[]"
 
-    def eval_set(self, expr, evaluation):
-        """Set[$MaxLengthIntStringConversion, expr_]"""
-        if isinstance(expr, Integer):
-            try:
-                sys.set_int_max_str_digits(expr.value)
-                return self.evaluate(evaluation)
-            except AttributeError:
-                if expr.value != 0 and expr.value < 640:
-                    evaluation.message("$MaxLengthIntStringConversion", "inv", expr)
-                return Integer0
-            except ValueError:
-                pass
-
-        evaluation.message("$MaxLengthIntStringConversion", "inv", expr)
-        return self.evaluate(evaluation)
-
-    def eval_setdelayed(self, expr, evaluation: Evaluation):
-        """SetDelayed[$MaxLengthIntStringConversion, expr_]"""
-        return self.eval_set(expr)
+        breakpoint()
 
 
 class CommandLine(Predefined):
@@ -280,8 +229,8 @@ class Machine(Predefined):
      = ...
     """
 
-    summary_text = "the type of computer system over with Mathics is running"
     name = "$Machine"
+    summary_text = "get the OS platform of the system running Mathics3"
 
     def evaluate(self, evaluation: Evaluation) -> String:
         return String(sys.platform)
@@ -327,6 +276,122 @@ class MathicsVersion(Predefined):
         return String(__version__)
 
 
+class MaxLengthIntStringConversion(Predefined):
+    """
+    <url>:Python 3.11 Integer string conversion length limitation:
+    https://docs.python.org/3.11/library/stdtypes.html#int-max-str-digits</url>
+    <dl>
+      <dt>'$MaxLengthIntStringConversion'
+      <dd>A positive system integer that fixes the largest size of the string that \
+          can appear when converting an 'Integer' value into a 'String'. When the \
+          string value is too large, then the middle of the integer contains \
+          an indication of the number of digits elided inside << >>.
+
+          If '$MaxLengthIntStringConversion' is set to 0, there is no \
+          bound. Aside from 0, 640 is the smallest value allowed.
+
+          The initial value can be set via environment variable \
+          'DEFAULT_MAX_STR_DIGITS'. If that is not set, \
+          the default value is 7000.
+    </dl>
+
+    Although Mathics3 can represent integers of arbitrary size, when it formats \
+    the value for display, there can be nonlinear behavior in printing the decimal string \
+    or converting it to a 'String'.
+
+    Python, in version 3.11 and up, puts a default limit on the size of \
+    the number of digits allows when converting a large integer into \
+    a string.
+
+    Show the default value of '$MaxLengthIntStringConversion':
+    >> $MaxLengthIntStringConversion
+     = ...
+
+    500! is a 1135-digit number:
+    >> 500! //ToString//StringLength
+     = ...
+
+    We first set '$MaxLengthIntStringConversion' to the smallest value allowed, \
+    so that we can see the truncation of digits in the middle:
+    >> $MaxLengthIntStringConversion = 640
+    ## Pyston 2.3.5 returns 0 while CPython returns 640
+    ## Therefore output testing below is generic.
+     = ...
+
+    Note that setting '$MaxLengthIntStringConversion' has an effect only on Python 3.11 and later;
+    Pyston 2.x however ignores this.
+
+    Now when we print the string value of 500! and Pyston 2.x is not used, \
+    the middle digits are removed:
+    >> 500!
+     = ...
+
+    To see this easier, manipulate the result as 'String':
+
+    >> bigFactorial = ToString[500!]; StringTake[bigFactorial, {310, 330}]
+     = ...
+
+    The <<501>> indicates that 501 digits have been omitted in the string conversion.
+
+    Other than 0, an 'Integer' value less than 640 is not accepted:
+    >> $MaxLengthIntStringConversion = 10
+     : 10 is not 0 or an Integer value greater than 640.
+     = ...
+    """
+
+    attributes = A_CONSTANT
+    messages = {"inv": "`1` is not 0 or an Integer value greater than 640."}
+    name = "$MaxLengthIntStringConversion"
+    summary_text = "the maximum length for which an integer is converted to a String"
+
+    def evaluate(self, evaluation: Evaluation) -> Integer:
+        try:
+            return Integer(sys.get_int_max_str_digits())
+        except AttributeError:
+            return Integer0
+
+    def eval_set(self, expr, evaluation):
+        """Set[$MaxLengthIntStringConversion, expr_]"""
+        if isinstance(expr, Integer):
+            try:
+                sys.set_int_max_str_digits(expr.value)
+                return self.evaluate(evaluation)
+            except AttributeError:
+                if expr.value != 0 and expr.value < 640:
+                    evaluation.message("$MaxLengthIntStringConversion", "inv", expr)
+                return Integer0
+            except ValueError:
+                pass
+
+        evaluation.message("$MaxLengthIntStringConversion", "inv", expr)
+        return self.evaluate(evaluation)
+
+    def eval_setdelayed(self, expr, evaluation: Evaluation):
+        """SetDelayed[$MaxLengthIntStringConversion, expr_]"""
+        return self.eval_set(expr)
+
+
+class MemoryInUse(Builtin):
+    """
+    <url>:WMA link:https://reference.wolfram.com/language/ref/MemoryInUse.html</url>
+
+    <dl>
+      <dt>'MemoryInUse[]'
+      <dd>Returns the amount of memory used by all of the definitions objects if we can determine that; -1 otherwise.
+    </dl>
+
+    >> MemoryInUse[]
+     = ...
+    """
+
+    summary_text = "number of bytes of memory currently being used by Mathics3"
+
+    def eval(self, evaluation: Evaluation) -> Integer:
+        """MemoryInUse[]"""
+        gc.collect()
+        return Integer(asizeof(evaluation.definitions))
+
+
 class Packages(Predefined):
     """
     <url>:WMA link:https://reference.wolfram.com/language/ref/Packages.html</url>
@@ -363,8 +428,8 @@ class ParentProcessID(Predefined):
 
     """
 
-    summary_text = "id of the process that invoked Mathics"
     name = "$ParentProcessID"
+    summary_text = "get process id of the process that invoked Mathics3"
 
     def evaluate(self, evaluation: Evaluation) -> Integer:
         return Integer(os.getppid())
@@ -384,8 +449,8 @@ class ProcessID(Predefined):
      = ...
     """
 
-    summary_text = "id of the Mathics process"
     name = "$ProcessID"
+    summary_text = "get process id of the Mathics process"
 
     def evaluate(self, evaluation: Evaluation) -> Integer:
         return Integer(os.getpid())
@@ -440,6 +505,28 @@ class PythonImplementation(Predefined):
         return String(python_implementation())
 
 
+class Run(Builtin):
+    """
+    <url>:WMA link:https://reference.wolfram.com/language/ref/Run.html</url>
+
+    <dl>
+      <dt>'Run[$command$]'
+      <dd>runs command as an external operating system command, returning the exit \
+         code returned from running the system command.
+    </dl>
+
+    X> Run["date"]
+     = ...
+    """
+
+    summary_text = "run a system command"
+
+    def eval(self, command, evaluation: Evaluation):
+        "Run[command_String]"
+        command_str = command.to_python()
+        return Integer(subprocess.call(command_str, shell=True))
+
+
 class ScriptCommandLine(Predefined):
     """
     <url>:WMA link:https://reference.wolfram.com/language/ref/ScriptCommandLine.html</url>
@@ -481,7 +568,6 @@ class SetEnvironment(Builtin):
 
      Set a single environment variable:
      S> SetEnvironment["FOO" -> "bar"]
-      = SetEnvironment[FOO -> bar]
 
      See that the environment variable has changed:
      S> GetEnvironment["FOO"]
@@ -499,18 +585,14 @@ class SetEnvironment(Builtin):
 
      S> SetEnvironment["FOO" -> 5]
       : 5 must be a string or None.
-      = SetEnvironment[FOO -> 5]
+      = $Failed
 
      S> GetEnvironment["FOO"]
       = FOO -> baz
 
     If the environment name is not a string, the evaluation fails without a message.
 
-     S> SetEnvironment[FOO -> "bar"]
-      = SetEnvironment[FOO -> bar]
-
-     S> GetEnvironment["FOO"]
-      = FOO -> baz
+     S> SetEnvironment[1 -> "bar"]
 
      See also <url>
      :'Environment':
@@ -527,14 +609,14 @@ class SetEnvironment(Builtin):
         env_var_name, env_var_value = rule.elements
         if not (env_var_value is SymbolNone or isinstance(env_var_value, String)):
             evaluation.message("SetEnvironment", "value", env_var_value)
-            return None
+            return SymbolFailed
 
         if isinstance(env_var_name, String):
             # WMA does not give an error message if env_var_name is not a String - weird.
             os.environ[env_var_name.value] = (
                 None if None is SymbolNone else env_var_value.value
             )
-        return None
+        return SymbolNull
 
     def eval_list(self, rules: Expression, evaluation: Evaluation):
         "SetEnvironment[{rules__}]"
@@ -543,26 +625,56 @@ class SetEnvironment(Builtin):
         return None
 
 
-class Run(Builtin):
+class Share(Builtin):
     """
-    <url>:WMA link:https://reference.wolfram.com/language/ref/Run.html</url>
+    <url>:WMA link:https://reference.wolfram.com/language/ref/Share.html</url>
 
     <dl>
-      <dt>'Run[$command$]'
-      <dd>runs command as an external operating system command, returning the exit \
-         code returned from running the system command.
+      <dt>'Share[]'
+      <dd>release memory forcing Python to do garbage collection. If Python package \
+          'psutil' installed is the amount of released memoryis returned. Otherwise \
+          returns $0$. This function differs from WMA which tries to reduce the amount \
+          of memory required to store definitions, by reducing duplicated definitions.
+      <dt>'Share[Symbol]'
+      <dd>Does the same thing as 'Share[]'; Note: this function differs from WMA which \
+          tries to reduce the amount of memory required to store definitions associated \
+          to $Symbol$.
+
     </dl>
 
-    X> Run["date"]
+    >> Share[]
      = ...
     """
 
-    summary_text = "run a system command"
+    summary_text = "force Python garbage collection"
 
-    def eval(self, command, evaluation: Evaluation):
-        "Run[command_String]"
-        command_str = command.to_python()
-        return Integer(subprocess.call(command_str, shell=True))
+    def eval(self, evaluation: Evaluation) -> Integer:
+        """Share[]"""
+        # TODO: implement a routine that swap all the definitions,
+        # collecting repeated symbols and expressions, and then
+        # replace them by references.
+        # Return the amount of memory recovered.
+        if have_psutil:
+            totalmem = psutil.virtual_memory().available
+            gc.collect()
+            return Integer(totalmem - psutil.virtual_memory().available)
+        else:
+            gc.collect()
+            return Integer0
+
+    def eval_with_symbol(self, symbol, evaluation: Evaluation) -> Integer:
+        """Share[symbol_Symbol]"""
+        # TODO: implement a routine that swap all the definitions,
+        # collecting repeated symbols and expressions, and then
+        # replace them by references.
+        # Return the amount of memory recovered.
+        if have_psutil:
+            totalmem = psutil.virtual_memory().available
+            gc.collect()
+            return Integer(totalmem - psutil.virtual_memory().available)
+        else:
+            gc.collect()
+            return Integer0
 
 
 class SystemID(Predefined):
@@ -649,7 +761,7 @@ class Version(Predefined):
     </dl>
 
     >> $Version
-     = Mathics ...
+     = Mathics3 ...
     """
 
     summary_text = "the current Mathics version"
@@ -769,105 +881,3 @@ else:
         def eval(self, evaluation: Evaluation) -> Integer:
             """MemoryAvailable[]"""
             return IntegerM1
-
-
-class MemoryInUse(Builtin):
-    """
-    <url>:WMA link:https://reference.wolfram.com/language/ref/MemoryInUse.html</url>
-
-    <dl>
-      <dt>'MemoryInUse[]'
-      <dd>Returns the amount of memory used by all of the definitions objects if we can determine that; -1 otherwise.
-    </dl>
-
-    >> MemoryInUse[]
-     = ...
-    """
-
-    summary_text = "number of bytes of memory currently being used by Mathics"
-
-    def eval_0(self, evaluation) -> Integer:
-        """MemoryInUse[]"""
-        # Partially borrowed from https://code.activestate.com/recipes/577504/
-        from itertools import chain
-        from sys import getsizeof
-
-        definitions = evaluation.definitions
-        seen = set()
-        try:
-            default_size = getsizeof(0)
-        except TypeError:
-            return IntegerM1
-
-        handlers = {
-            tuple: iter,
-            list: iter,
-            dict: (lambda d: chain.from_iterable(d.items())),
-            set: iter,
-            frozenset: iter,
-        }
-
-        def sizeof(obj):
-            if id(obj) in seen:
-                return 0
-            seen.add(id(obj))
-            s = getsizeof(obj, default_size)
-            for typ, handler in handlers.items():
-                if isinstance(obj, typ):
-                    s += sum(map(sizeof, handler(obj)))
-                    break
-            return s
-
-        return Integer(sizeof(definitions))
-
-
-class Share(Builtin):
-    """
-    <url>:WMA link:https://reference.wolfram.com/language/ref/Share.html</url>
-
-    <dl>
-      <dt>'Share[]'
-      <dd>release memory forcing Python to do garbage collection. If Python package \
-          'psutil' installed is the amount of released memoryis returned. Otherwise \
-          returns $0$. This function differs from WMA which tries to reduce the amount \
-          of memory required to store definitions, by reducing duplicated definitions.
-      <dt>'Share[Symbol]'
-      <dd>Does the same thing as 'Share[]'; Note: this function differs from WMA which \
-          tries to reduce the amount of memory required to store definitions associated \
-          to $Symbol$.
-
-    </dl>
-
-    >> Share[]
-     = ...
-    """
-
-    summary_text = "force Python garbage collection"
-
-    def eval(self, evaluation: Evaluation) -> Integer:
-        """Share[]"""
-        # TODO: implement a routine that swap all the definitions,
-        # collecting repeated symbols and expressions, and then
-        # replace them by references.
-        # Return the amount of memory recovered.
-        if have_psutil:
-            totalmem = psutil.virtual_memory().available
-            gc.collect()
-            return Integer(totalmem - psutil.virtual_memory().available)
-        else:
-            gc.collect()
-            return Integer0
-
-    def eval_with_symbol(self, symbol, evaluation: Evaluation) -> Integer:
-        """Share[symbol_Symbol]"""
-        # TODO: implement a routine that swap all the definitions,
-        # collecting repeated symbols and expressions, and then
-        # replace them by references.
-        # Return the amount of memory recovered.
-        if have_psutil:
-            totalmem = psutil.virtual_memory().available
-            gc.collect()
-            return Integer(totalmem - psutil.virtual_memory().available)
-        else:
-            gc.collect()
-            return Integer0

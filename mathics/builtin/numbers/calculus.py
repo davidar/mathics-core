@@ -10,7 +10,7 @@ arithmetic operations.
 """
 
 from itertools import product
-from typing import Iterable, Optional
+from typing import Callable, Dict, Optional, Tuple
 
 import numpy as np
 import sympy
@@ -41,7 +41,12 @@ from mathics.core.builtin import Builtin, PostfixOperator, SympyFunction
 from mathics.core.convert.expression import to_expression, to_mathics_list
 from mathics.core.convert.function import expression_to_callable_and_args
 from mathics.core.convert.python import from_python
-from mathics.core.convert.sympy import SympyExpression, from_sympy, sympy_symbol_prefix
+from mathics.core.convert.sympy import (
+    SymbolRootSum,
+    SympyExpression,
+    from_sympy,
+    sympy_symbol_prefix,
+)
 from mathics.core.evaluation import Evaluation
 from mathics.core.expression import Expression
 from mathics.core.list import ListExpression
@@ -63,6 +68,8 @@ from mathics.core.systemsymbols import (
     SymbolConditionalExpression,
     SymbolD,
     SymbolDerivative,
+    SymbolFunction,
+    SymbolIndeterminate,
     SymbolInfinity,
     SymbolInfix,
     SymbolIntegrate,
@@ -75,6 +82,7 @@ from mathics.core.systemsymbols import (
     SymbolSeries,
     SymbolSeriesData,
     SymbolSimplify,
+    SymbolSlot,
     SymbolUndefined,
 )
 from mathics.eval.makeboxes import format_element
@@ -218,7 +226,7 @@ class D(SympyFunction):
     summary_text = "partial derivatives of scalar or vector functions"
     sympy_name = "Derivative"
 
-    def eval(self, f, x, evaluation: Evaluation):
+    def eval(self, f, x, evaluation: Evaluation):  # type: ignore[override]
         "D[f_, x_?NotListQ]"
 
         # Handle partial derivative special cases:
@@ -228,7 +236,7 @@ class D(SympyFunction):
         if f == x:
             return Integer1
 
-        x_pattern = BasePattern.create(x)
+        x_pattern = BasePattern.create(x, evaluation=evaluation)
         if f.is_free(x_pattern, evaluation):
             return Integer0
 
@@ -403,7 +411,6 @@ class Derivative(PostfixOperator, SympyFunction):
 
     attributes = A_N_HOLD_ALL
     default_formats = False
-    operator = "'"
     rules = {
         "MakeBoxes[Derivative[n__Integer][f_], "
         "  form:StandardForm|TraditionalForm]": (
@@ -598,7 +605,13 @@ class _BaseFinder(Builtin):
     """
 
     attributes = A_HOLD_ALL | A_PROTECTED
-    methods = {}
+    methods: Dict[
+        str,
+        Callable[
+            [Expression, BaseElement, Expression, dict, Evaluation],
+            Tuple[BaseElement, bool],
+        ],
+    ] = {}
     messages = {
         "snum": "Value `1` is not a number.",
         "nnum": "The function value is not a number at `1` = `2`.",
@@ -889,9 +902,7 @@ class FindRoot(_BaseFinder):
     }
     messages = _BaseFinder.messages.copy()
     methods = {}
-    summary_text = (
-        "Looks for a root of an equation or a zero of a numerical expression."
-    )
+    summary_text = "look for a root of an equation or a zero of a numerical expression."
 
     try:
         from mathics.eval.numbers.calculus.optimizers import (
@@ -1045,7 +1056,7 @@ class Integrate(SympyFunction):
                 return [elements[0]] + x.elements
         return elements
 
-    def from_sympy(self, elements: Iterable) -> Expression:
+    def from_sympy(self, elements: Tuple[BaseElement, ...]) -> Expression:
         args = []
         for element in elements[1:]:
             if element.has_form("List", 1):
@@ -1056,7 +1067,7 @@ class Integrate(SympyFunction):
         new_elements = [elements[0]] + args
         return Expression(Symbol(self.get_name()), *new_elements)
 
-    def eval(self, f, xs, evaluation: Evaluation, options: dict):
+    def eval(self, f, xs, evaluation: Evaluation, options: dict):  # type: ignore[override]
         "Integrate[f_, xs__, OptionsPattern[]]"
         f_sympy = f.to_sympy()
         if f_sympy.is_infinite:
@@ -1107,7 +1118,7 @@ class Integrate(SympyFunction):
             # TODO MaxExtraPrecision -> maxn
             sympy_result = sympy_result.evalf(dps(prec))
 
-        result = from_sympy(sympy_result)
+        result: Optional[BaseElement] = from_sympy(sympy_result)
         # If we obtain an atom (number or symbol)
         # just return...
         if isinstance(result, Atom):
@@ -1126,7 +1137,11 @@ class Integrate(SympyFunction):
             evaluation.definitions.set_ownvalue("System`$Assumptions", assuming)
         # Set the $Assumptions
 
-        if result.get_head_name() == "System`Piecewise":
+        if (
+            result is not None
+            and result.get_head_name() == "System`Piecewise"
+            and isinstance(result, Expression)
+        ):
             cases = result.elements[0].elements
             if len(result.elements) == 1:
                 if cases[-1].elements[1] is SymbolTrue:
@@ -1155,7 +1170,11 @@ class Integrate(SympyFunction):
                             "System`$Assumptions", old_assumptions
                         )
                     return resif
-                if resif.has_form("ConditionalExpression", 2):
+                if (
+                    isinstance(resif, Expression)
+                    and resif.has_form("ConditionalExpression", 2)
+                    and cond is not None
+                ):
                     cond = Expression(SymbolAnd, resif.elements[1], cond)
                     cond = Expression(SymbolSimplify, cond).evaluate(evaluation)
                     resif = resif.elements[0]
@@ -1164,21 +1183,27 @@ class Integrate(SympyFunction):
             if default is SymbolUndefined and len(cases) == 1:
                 cases = cases[0]
                 result = Expression(SymbolConditionalExpression, *(cases.elements))
-            else:
+            elif isinstance(result._head, Symbol):
                 # FIXME: there is a bug in from_sympy which is leaving an integer
                 # untranslated. Fix this and we can use Expression()
                 result = to_expression(result._head, cases, default)
+            else:
+                raise NotImplementedError
         else:
-            if result.get_head() is SymbolIntegrate:
-                if result.elements[0].evaluate(evaluation).sameQ(f):
-                    # Sympy returned the same expression, so it can't be evaluated.
-                    if old_assumptions:
-                        evaluation.definitions.set_ownvalue(
-                            "System`$Assumptions", old_assumptions
-                        )
-                    return
-            result = Expression(SymbolSimplify, result)
-            result = result.evaluate(evaluation)
+            if (
+                isinstance(result, Expression)
+                and result.get_head() is SymbolIntegrate
+                and result.elements[0].evaluate(evaluation).sameQ(f)
+            ):
+                # Sympy returned the same expression, so it can't be evaluated.
+                if old_assumptions:
+                    evaluation.definitions.set_ownvalue(
+                        "System`$Assumptions", old_assumptions
+                    )
+                return
+            if result is not None:
+                result = Expression(SymbolSimplify, result)
+                result = result.evaluate(evaluation)
 
         if old_assumptions:
             evaluation.definitions.set_ownvalue("System`$Assumptions", old_assumptions)
@@ -1410,7 +1435,7 @@ class NIntegrate(Builtin):
         coords = [axis[0] for axis in domain]
         # If any of the points in the integration domain is complex,
         # stop the evaluation...
-        if any([c.get_head_name() == "System`List" for c in coords]):
+        if any(c.get_head_name() == "System`List" for c in coords):
             evaluation.message("NIntegrate", "cmpint")
             return
 
@@ -1606,7 +1631,7 @@ class Root(SympyFunction):
 
     Roots that can't be represented by radicals:
     >> Root[#1 ^ 5 + 2 #1 + 1&, 2]
-     = Root[#1 ^ 5 + 2 #1 + 1&, 2]
+     = Root[1 + #1 ^ 5 + 2 #1&, 2]
     """
 
     messages = {
@@ -1615,7 +1640,7 @@ class Root(SympyFunction):
         "iidx": "Argument `1` at position 2 is out of bounds",
     }
 
-    summary_text = "the i-th root of a polynomial."
+    summary_text = "compute the i-th root of a polynomial."
     sympy_name = "CRootOf"
 
     def eval(self, f, i, evaluation: Evaluation):
@@ -1670,36 +1695,91 @@ class Root(SympyFunction):
             return None
 
 
+class RootSum(SympyFunction):
+    """
+     <url>:WMA link: https://reference.wolfram.com/language/ref/RootSum.html</url>
+
+     <dl>
+       <dt>'RootSum[$f$, $form$]'
+       <dd>sums $form$[$x$] for all roots of the polynomial $f$[$x$].
+     </dl>
+
+    Integrating a rational function of any order:
+     >> Integrate[1/(x^5 + 11 x + 1), {x, 1, 3}]
+      = RootSum[-1 - 212960 #1 ^ 3 - 9680 #1 ^ 2 - 165 #1 + 41232181 #1 ^ 5&, (Log[3749971 - 3512322106304 #1 ^ 4 + 453522741 #1 + 16326568676 #1 ^ 2 + 79825502416 #1 ^ 3] - 4 Log[5]) #1&] - RootSum[-1 - 212960 #1 ^ 3 - 9680 #1 ^ 2 - 165 #1 + 41232181 #1 ^ 5&, (Log[3748721 - 3512322106304 #1 ^ 4 + 453522741 #1 + 16326568676 #1 ^ 2 + 79825502416 #1 ^ 3] - 4 Log[5]) #1&]
+     >> N[%, 50]
+      = 0.051278805184286949884270940103072421286139857550894
+
+     Simplification of 'RootSum' expression
+     >> RootSum[#^5 - 11 # + 1 &, (#^2 - 1)/(#^3 - 2 # + c) &]
+      = (538 - 88 c + 396 c ^ 2 + 5 c ^ 3 - 5 c ^ 4) / (97 - 529 c - 53 c ^ 2 + 88 c ^ 3 + c ^ 5)
+
+     >> RootSum[#^5 - 3 # - 7 &, Sin] //N//Chop
+      = 0.292188
+
+     Use 'Normal' to expand 'RootSum':
+     >> RootSum[1+#+#^2+#^3+#^4 &, Log[x + #] &]
+      = RootSum[1 + #1 ^ 2 + #1 ^ 3 + #1 ^ 4 + #1&, Log[x + #1]&]
+     >> %//Normal
+      = Log[-1 / 4 - Sqrt[5] / 4 - I Sqrt[5 / 8 - Sqrt[5] / 8] + x] + Log[-1 / 4 - Sqrt[5] / 4 + I Sqrt[5 / 8 - Sqrt[5] / 8] + x] + Log[-1 / 4 - I Sqrt[5 / 8 + Sqrt[5] / 8] + Sqrt[5] / 4 + x] + Log[-1 / 4 + I Sqrt[5 / 8 + Sqrt[5] / 8] + Sqrt[5] / 4 + x]
+    """
+
+    summary_text = "sum polynomial roots"
+
+    def eval(self, f, form, evaluation: Evaluation):  # type: ignore[override]
+        "RootSum[f_, form_]"
+        return from_sympy(Expression(SymbolRootSum, f, form).to_sympy())
+
+    def to_sympy(self, expr: Expression, **kwargs):
+        func = expr.elements[1]
+        if not isinstance(func.to_sympy(), sympy.Lambda):
+            # eta conversion
+            func = Expression(
+                SymbolFunction, Expression(func, Expression(SymbolSlot, Integer1))
+            )
+
+        poly = expr.elements[0].to_sympy()
+        poly_x = sympy.Symbol("poly_x")
+        return sympy.RootSum(poly(poly_x), func.to_sympy(), x=poly_x)
+
+
 class Series(Builtin):
     """
-    <url>:WMA link:https://reference.wolfram.com/language/ref/Series.html</url>
+     <url>:WMA link:https://reference.wolfram.com/language/ref/Series.html</url>
 
-    <dl>
-      <dt>'Series[$f$, {$x$, $x0$, $n$}]'
-      <dd>Represents the series expansion around '$x$=$x0$' up to order $n$.
-    </dl>
+     <dl>
+       <dt>'Series[$f$, {$x$, $x0$, $n$}]'
+       <dd>Represents the series expansion around '$x$=$x0$' up to order $n$.
+     </dl>
 
-    For elementary expressions, 'Series' returns the explicit power series as a 'SeriesData' expression:
-    >> Series[Exp[x], {x,0,2}]
-     = 1 + x + 1 / 2 x ^ 2 + O[x] ^ 3
-    >> % // FullForm
-     = SeriesData[x, 0, {1,1,Rational[1, 2]}, 0, 3, 1]
-    Replacing the variable by a value, the series will not be evaluated as
-    an expression, but as a 'SeriesData' object:
-    >> s = Series[Exp[x^2],{x,0,2}]
-     = 1 + x ^ 2 + O[x] ^ 3
-    >> s /. x->4
-     = 1 + 4 ^ 2 + O[4] ^ 3
+     For elementary expressions, 'Series' returns the explicit power series as a 'SeriesData' expression:
+     >> series = Series[Exp[x^2], {x,0,2}]
+      = 1 + x ^ 2 + O[x] ^ 3
 
-    'Normal' transforms a 'SeriesData' expression into a polynomial:
-    >> s // Normal
-     = 1 + x ^ 2
-    >> (s // Normal) /. x-> 4
-     = 17
-    >> Clear[s];
-    We can also expand over multiple variables
-    >> Series[Exp[x-y], {x, 0, 2}, {y, 0, 2}]
-     = (1 - y + 1 / 2 y ^ 2 + O[y] ^ 3) + (1 - y + 1 / 2 y ^ 2 + O[y] ^ 3) x + (1 / 2 + (-1 / 2) y + 1 / 4 y ^ 2 + O[y] ^ 3) x ^ 2 + O[x] ^ 3
+     The expression created is a 'SeriesData' object:
+     >> series // FullForm
+      = SeriesData[x, 0, {1,0,1}, 0, 3, 1]
+
+     Replacing $x$ with does a value produces another 'SeriesData' object:
+     >> series /. x->4
+      = 1 + 4 ^ 2 + O[4] ^ 3
+
+     'Normal' transforms a 'SeriesData' expression into a polynomial:
+     >> series // Normal
+      = 1 + x ^ 2
+     >> (series // Normal) /. x-> 4
+      = 17
+     >> Clear[series];
+
+     We can also expand over multiple variables:
+     >> Series[Exp[x-y], {x, 0, 2}, {y, 0, 2}]
+      = (1 - y + 1 / 2 y ^ 2 + O[y] ^ 3) + (1 - y + 1 / 2 y ^ 2 + O[y] ^ 3) x + (1 / 2 + (-1 / 2) y + 1 / 4 y ^ 2 + O[y] ^ 3) x ^ 2 + O[x] ^ 3
+
+    See also <url>
+     :'SeriesCoefficient':
+     /doc/reference-of-built-in-symbols/integer-and-number-theoretical-functions/calculus/seriescoefficient/</url> and <url>
+     :'SeriesData':
+     /doc/reference-of-built-in-symbols/integer-and-number-theoretical-functions/calculus/seriesdata/</url>.
 
     """
 
@@ -1709,7 +1789,7 @@ class Series(Builtin):
         "sspec": "Series specification `1` is not a list with three elements.",
     }
 
-    summary_text = "power series and asymptotic expansions"
+    summary_text = "compute power series and asymptotic expansions"
 
     def eval_series(self, f, x, x0, n, evaluation: Evaluation):
         """Series[f_, {x_Symbol, x0_, n_Integer}]"""
@@ -1731,31 +1811,116 @@ class Series(Builtin):
         return None
 
 
+class SeriesCoefficient(Builtin):
+    """
+    <url>:WMA link:https://reference.wolfram.com/language/ref/SeriesCoefficient.html</url>
+
+    <dl>
+      <dt>'SeriesCoefficient[$series$, $n$]'
+      <dd>Find the $n$th coefficient in the given $series$.
+
+      <dt>'SeriesCoefficient[$f$, {$x$, $x0$, $n$}]'
+      <dd>Find the ($x$-$x0$)^n in the expansion of $f$ about the point $x$=$x0$.
+    </dl>
+
+    First we list 5 terms of a series:
+    >> Series[Exp[Sin[x]], {x, 0, 5}]
+     = 1 + x + 1 / 2 x ^ 2 + (-1 / 8) x ^ 4 + (-1 / 15) x ^ 5 + O[x] ^ 6
+
+    Now get the $x$^4 coefficient:
+    >> SeriesCoefficient[%, 4]
+     = -1 / 8
+
+    Do the same thing, but without calling 'Series' first:
+    >> SeriesCoefficient[Exp[Sin[x]], {x, 0, 4}]
+     = -1 / 8
+
+    >> SeriesCoefficient[2x, {x, 0, 2}]
+     = 0
+
+    >> SeriesCoefficient[SeriesData[x, c, Table[i^2, {i, 10}], 7, 17, 3], 14/3]
+     = 64
+    >> SeriesCoefficient[SeriesData[x, c, Table[i^2, {i, 10}], 7, 17, 3], 6/3]
+     = 0
+    >> SeriesCoefficient[SeriesData[x, c, Table[i^2, {i, 10}], 7, 17, 3], 17/3]
+     = Indeterminate
+
+    See also <url>
+    :'Series':
+    /doc/reference-of-built-in-symbols/integer-and-number-theoretical-functions/calculus/series/</url> and <url>
+    :'SeriesData':
+    /doc/reference-of-built-in-symbols/integer-and-number-theoretical-functions/calculus/seriesdata/</url>.
+    """
+
+    attributes = A_PROTECTED
+    rules = {
+        "SeriesCoefficient[f_, {x_Symbol, x0_, n_Integer}]": "SeriesCoefficient[Series[f, {x, x0, n}], n]"
+    }
+    summary_text = "compute power series coefficient"
+
+    def eval(self, series: Expression, n: Rational, evaluation: Evaluation):
+        """SeriesCoefficient[series_SeriesData, n_]"""
+        coeffs: ListExpression
+        nmin: Integer
+        nmax: Integer
+        den: Integer
+        coeffs, nmin, nmax, den = series.elements[2:]
+        index = n.value * den.value - nmin.value
+        if index >= nmax.value - nmin.value:
+            return SymbolIndeterminate
+        if index < 0 or index >= len(coeffs.elements):
+            return Integer0
+        return coeffs[index]
+
+
 class SeriesData(Builtin):
     """
 
     <url>:WMA link:https://reference.wolfram.com/language/ref/SeriesData.html</url>
 
     <dl>
-      <dt>'SeriesData[...]'
-      <dd>Represents a series expansion.
+      <dt>'SeriesData[$x$, $x0$, {$a0$, $a1$, ...}, $nmin$, $nmax$, $den$]'
+      <dd>produces a power series in the variable $x$ about point $x0$. The \
+      $ai$ are the coefficients of the power series. The powers of ($x$-$x0$) that appear \
+      are $nmin$/$den$, ($nmin$+1)/$den$, ..., $nmax$/$den$.
     </dl>
 
-    Sum of two series:
-    >> Series[Cosh[x],{x,0,2}] + Series[Sinh[x],{x,0,3}]
+    'SeriesData' is the 'Head' of expressions generated by 'Series':
+
+    >> series = Series[Cosh[x],{x,0,2}]
+     = 1 + 1 / 2 x ^ 2 + O[x] ^ 3
+
+    >> Head[series]
+     = SeriesData
+
+    >> series // FullForm
+     = SeriesData[x, 0, {1,0,Rational[1, 2]}, 0, 3, 1]
+
+    You can apply certain mathematical operations to 'SeriesData' objects to get \
+    new 'SeriesData' objects truncated to the appropriate order.
+
+    >> series + Series[Sinh[x],{x,0,3}]
      = 1 + x + 1 / 2 x ^ 2 + O[x] ^ 3
+
     >> Series[f[x],{x,0,2}] * g[w]
      = f[0] g[w] + g[w] f'[0] x + g[w] f''[0] / 2 x ^ 2 + O[x] ^ 3
-    The product of two series on the same neighbourhood of the same variable are multiplied
+
+    The product of two series on the same neighborhood of the same variable are multiplied:
     >> Series[Exp[-a x],{x,0,2}] * Series[Exp[-b x],{x,0,2}]
      = 1 + (-a - b) x + (a ^ 2 / 2 + a b + b ^ 2 / 2) x ^ 2 + O[x] ^ 3
     >> D[Series[Exp[-a x],{x,0,2}],a]
      = -x + a x ^ 2 + O[x] ^ 3
+
+    See also <url>
+    :'Series':
+    /doc/reference-of-built-in-symbols/integer-and-number-theoretical-functions/calculus/series/</url> and <url>
+    :'SeriesCoefficient':
+    /doc/reference-of-built-in-symbols/integer-and-number-theoretical-functions/calculus/seriescoefficient/</url>.
     """
 
     # TODO: Implement sum, product and composition of series
 
-    summary_text = "power series of a variable about a point"
+    summary_text = "compute power series of a variable about a point"
 
     def eval_reduce(
         self, x, x0, data, nummin: Integer, nummax: Integer, den, evaluation: Evaluation
@@ -1838,7 +2003,7 @@ class SeriesData(Builtin):
                 term,
                 x,
                 x0,
-                nummax.value / nummax.value,
+                Integer(nummax.value / den.value),
                 evaluation,
             )
             return ret
@@ -1910,7 +2075,15 @@ class SeriesData(Builtin):
         return series_expr
 
     def eval_times(
-        self, x, x0, data, nummin, nummax, den, coeff, evaluation: Evaluation
+        self,
+        x,
+        x0,
+        data: ListExpression,
+        nummin: Integer,
+        nummax: Integer,
+        den: Integer,
+        coeff: BaseElement,
+        evaluation: Evaluation,
     ):
         """Times[SeriesData[x_, x0_, data_, nummin_, nummax_, den_], coeff__]"""
         series = (
@@ -1919,7 +2092,7 @@ class SeriesData(Builtin):
             nummax.get_int_value(),
             den.get_int_value(),
         )
-        x_pattern = BasePattern.create(x)
+        x_pattern = BasePattern.create(x, evaluation=evaluation)
         incompat_series = []
         max_exponent = Integer(int(series[2] / series[3] + 1))
         if coeff.get_head() is SymbolSequence:
@@ -2265,7 +2438,7 @@ class Solve(Builtin):
         vars = []
         vars_sympy = []
         for var, var_sympy in zip(all_vars, all_vars_sympy):
-            pattern = BasePattern.create(var)
+            pattern = BasePattern.create(var, evaluation=evaluation)
             if not eqs.is_free(pattern, evaluation):
                 vars.append(var)
                 vars_sympy.append(var_sympy)

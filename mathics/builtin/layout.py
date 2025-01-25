@@ -16,7 +16,7 @@ from mathics.builtin.box.layout import GridBox, RowBox, to_boxes
 from mathics.builtin.makeboxes import MakeBoxes
 from mathics.builtin.options import options_to_rules
 from mathics.core.atoms import Real, String
-from mathics.core.builtin import BinaryOperator, Builtin, Operator
+from mathics.core.builtin import Builtin, Operator, PostfixOperator, PrefixOperator
 from mathics.core.expression import Evaluation, Expression
 from mathics.core.list import ListExpression
 from mathics.core.symbols import Symbol
@@ -179,9 +179,6 @@ class Infix(Builtin):
      = a + b - c
     """
 
-    messages = {
-        "normal": "Nonatomic expression expected at position `1`",
-    }
     summary_text = "infix form"
 
 
@@ -214,7 +211,7 @@ class NonAssociative(Builtin):
     summary_text = "non-associative operator"
 
 
-class Postfix(BinaryOperator):
+class Postfix(PostfixOperator):
     """
     <url>:WMA link:https://reference.wolfram.com/language/ref/Postfix.html</url>
 
@@ -234,7 +231,6 @@ class Postfix(BinaryOperator):
     """
 
     grouping = "Left"
-    operator = "//"
     operator_display = None
     summary_text = "postfix form"
 
@@ -271,9 +267,12 @@ class Precedence(Builtin):
         name = expr.get_name()
         precedence = 1000
         if name:
-            builtin = evaluation.definitions.get_definition(name, only_if_exists=True)
-            if builtin:
-                builtin = builtin.builtin
+            try:
+                builtin = evaluation.definitions.get_definition(
+                    name, only_if_exists=True
+                ).builtin
+            except KeyError:
+                builtin = None
             if builtin is not None and isinstance(builtin, Operator):
                 precedence = builtin.precedence
             else:
@@ -294,7 +293,7 @@ class PrecedenceForm(Builtin):
     summary_text = "parenthesize with a precedence"
 
 
-class Prefix(BinaryOperator):
+class Prefix(PrefixOperator):
     """
     <url>:WMA link:https://reference.wolfram.com/language/ref/Prefix.html</url>
 
@@ -324,7 +323,6 @@ class Prefix(BinaryOperator):
     """
 
     grouping = "Right"
-    operator = "@"
     operator_display = None
     summary_text = "prefix form"
 

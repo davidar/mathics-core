@@ -10,7 +10,7 @@ from mathics.core.attributes import (
     A_ORDERLESS,
     A_PROTECTED,
 )
-from mathics.core.builtin import BinaryOperator, Builtin, Predefined, PrefixOperator
+from mathics.core.builtin import Builtin, InfixOperator, Predefined, PrefixOperator
 from mathics.core.evaluation import Evaluation
 from mathics.core.exceptions import InvalidLevelspecError
 from mathics.core.expression import Expression
@@ -66,7 +66,7 @@ class _ManyTrue(Builtin):
         return self._no_short_circuit()
 
 
-class And(BinaryOperator):
+class And(InfixOperator):
     """
     <url>:WMA link:
     https://reference.wolfram.com/language/ref/And.html</url>
@@ -89,7 +89,6 @@ class And(BinaryOperator):
     """
 
     attributes = A_FLAT | A_HOLD_ALL | A_ONE_IDENTITY | A_PROTECTED
-    operator = "&&"
     summary_text = "logic conjunction"
     #    rules = {
     #        "And[a_]": "a",
@@ -183,7 +182,7 @@ class AllTrue(_ManyTrue):
         return SymbolTrue
 
 
-class Equivalent(BinaryOperator):
+class Equivalent(InfixOperator):
     """
     <url>
     :WMA link:
@@ -210,7 +209,6 @@ class Equivalent(BinaryOperator):
     """
 
     attributes = A_ORDERLESS | A_PROTECTED
-    operator = "\u29E6"
     summary_text = "logic equivalence"
 
     def eval(self, args, evaluation: Evaluation):
@@ -253,7 +251,7 @@ class False_(Predefined):
     summary_text = "boolean constant for False"
 
 
-class Implies(BinaryOperator):
+class Implies(InfixOperator):
     """
     <url>:WMA link:https://reference.wolfram.com/language/ref/Implies.html</url>
 
@@ -277,7 +275,6 @@ class Implies(BinaryOperator):
      = a Implies b Implies c
     """
 
-    operator = "\u21D2"
     grouping = "Right"
     summary_text = "logic implication"
 
@@ -329,7 +326,7 @@ class NoneTrue(_ManyTrue):
         return SymbolTrue
 
 
-class Or(BinaryOperator):
+class Or(InfixOperator):
     """
     <url>:WMA link:https://reference.wolfram.com/language/ref/Or.html</url>
 
@@ -351,7 +348,6 @@ class Or(BinaryOperator):
     """
 
     attributes = A_FLAT | A_HOLD_ALL | A_ONE_IDENTITY | A_PROTECTED
-    operator = "||"
     summary_text = "logic (inclusive) disjunction"
 
     #    rules = {
@@ -379,7 +375,7 @@ class Or(BinaryOperator):
             return SymbolFalse
 
 
-class Nand(Builtin):
+class Nand(InfixOperator):
     """
     <url>:WMA link:
     https://reference.wolfram.com/language/ref/Nand.html</url>
@@ -395,14 +391,13 @@ class Nand(Builtin):
      = True
     """
 
-    operator = "\u22BC"
     rules = {
         "Nand[expr___]": "Not[And[expr]]",
     }
     summary_text = "negation of logic conjunction"
 
 
-class Nor(Builtin):
+class Nor(InfixOperator):
     """
     <url>:WMA link:https://reference.wolfram.com/language/ref/Nor.html</url>
 
@@ -417,7 +412,6 @@ class Nor(Builtin):
      = False
     """
 
-    operator = "\u22BD"
     rules = {
         "Nor[expr___]": "Not[Or[expr]]",
     }
@@ -442,6 +436,8 @@ class Not(PrefixOperator):
      = !b
     """
 
+    # FIXME: If we remove this we pick up unicode unconditionally
+    # which wew don't want to do.
     operator = "!"
 
     rules = {
@@ -467,7 +463,7 @@ class True_(Predefined):
     summary_text = "boolean constant for True"
 
 
-class Xor(BinaryOperator):
+class Xor(InfixOperator):
     """
     <url>:WMA link:https://reference.wolfram.com/language/ref/Xor.html</url>
 
@@ -492,7 +488,6 @@ class Xor(BinaryOperator):
     """
 
     attributes = A_FLAT | A_ONE_IDENTITY | A_ORDERLESS | A_PROTECTED
-    operator = "\u22BB"
     summary_text = "logic (exclusive) disjunction"
 
     def eval(self, args, evaluation: Evaluation):

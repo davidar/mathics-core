@@ -22,6 +22,7 @@ from io import StringIO
 from time import time
 from typing import Callable
 
+import mathics.eval.tracing
 from mathics.core.attributes import A_HOLD_ALL, A_HOLD_ALL_COMPLETE, A_PROTECTED
 from mathics.core.builtin import Builtin
 from mathics.core.convert.python import from_bool, from_python
@@ -40,8 +41,6 @@ def traced_apply_function(
         if not self.check_options(options, evaluation):
             return None
     vars_noctx = dict(((strip_context(s), vars[s]) for s in vars))
-    if self.pass_expression:
-        vars_noctx["expression"] = expression
     builtin_name = self.function.__qualname__.split(".")[0]
     stat = TraceBuiltins.function_stats[builtin_name]
     t_start = time()
@@ -123,7 +122,7 @@ class PrintTrace(_TraceBase):
 
     Note: before '$TraceBuiltins' is set to 'True', 'PrintTrace[]' will print an empty
     list.
-    >> PrintTrace[]
+    >> PrintTrace[] (* See console log *)
 
     >> $TraceBuiltins = True
      = True
@@ -167,22 +166,22 @@ class TraceBuiltins(_TraceBase):
     </ul>
 
 
-    >> TraceBuiltins[Graphics3D[Tetrahedron[]]]
+    >> TraceBuiltins[Graphics3D[Tetrahedron[]]] (* See console log *)
      = -Graphics3D-
 
     By default, the output is sorted by the name:
-    >> TraceBuiltins[Times[x, x]]
+    >> TraceBuiltins[Times[x, x]] (* See console log *)
      = x ^ 2
 
     By default, the output is sorted by the number of calls of the builtin from \
     highest to lowest:
-    >> TraceBuiltins[Times[x, x], SortBy->"count"]
+    >> TraceBuiltins[Times[x, x], SortBy->"count"] (* See console log *)
      = x ^ 2
 
     You can have results ordered by name, or time.
 
     Trace an expression and list the result by time from highest to lowest.
-    >> TraceBuiltins[Times[x, x], SortBy->"time"]
+    >> TraceBuiltins[Times[x, x], SortBy->"time"] (* See console log *)
      = x ^ 2
     """
 
@@ -354,6 +353,8 @@ class TraceEvaluation(Builtin):
       <dd>Evaluate $expr$ and print each step of the evaluation.
     </dl>
 
+    The 'ShowTimeBySteps' option prints the elapsed time before an evaluation occurs.
+
     >> TraceEvaluation[(x + x)^2]
      | ...
      = ...
@@ -367,20 +368,39 @@ class TraceEvaluation(Builtin):
     options = {
         "System`ShowTimeBySteps": "False",
     }
-    summary_text = "trace the successive evaluations"
+    summary_text = "trace expression evaluation"
 
     def eval(self, expr, evaluation: Evaluation, options: dict):
         "TraceEvaluation[expr_, OptionsPattern[]]"
+
         curr_trace_evaluation = evaluation.definitions.trace_evaluation
         curr_time_by_steps = evaluation.definitions.timing_trace_evaluation
+
+        old_evaluation_call_hook = mathics.eval.tracing.trace_evaluate_on_call
+        old_evaluation_return_hook = mathics.eval.tracing.trace_evaluate_on_return
+
+        mathics.eval.tracing.trace_evaluate_on_call = (
+            mathics.eval.tracing.print_evaluate
+        )
+
+        mathics.eval.tracing.trace_evaluate_on_return = (
+            mathics.eval.tracing.print_evaluate
+        )
+
         evaluation.definitions.trace_evaluation = True
         evaluation.definitions.timing_trace_evaluation = (
             options["System`ShowTimeBySteps"] is SymbolTrue
         )
-        result = expr.evaluate(evaluation)
-        evaluation.definitions.trace_evaluation = curr_trace_evaluation
-        evaluation.definitions.timing_trace_evaluation = curr_time_by_steps
-        return result
+        try:
+            return expr.evaluate(evaluation)
+        except Exception:
+            raise
+        finally:
+            evaluation.definitions.trace_evaluation = curr_trace_evaluation
+            evaluation.definitions.timing_trace_evaluation = curr_time_by_steps
+
+            mathics.eval.tracing.trace_evaluate_on_call = old_evaluation_call_hook
+            mathics.eval.tracing.trace_evaluate_on_return = old_evaluation_return_hook
 
 
 class TraceEvaluationVariable(Builtin):

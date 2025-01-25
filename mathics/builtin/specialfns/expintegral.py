@@ -5,7 +5,13 @@ Exponential Integral and Special Functions
 """
 
 
-from mathics.core.builtin import MPMathFunction
+from mathics.core.attributes import (
+    A_LISTABLE,
+    A_NUMERIC_FUNCTION,
+    A_PROTECTED,
+    A_READ_PROTECTED,
+)
+from mathics.core.builtin import Builtin, MPMathFunction
 
 
 class ExpIntegralE(MPMathFunction):
@@ -14,13 +20,14 @@ class ExpIntegralE(MPMathFunction):
 
     <dl>
     <dt>'ExpIntegralE[$n$, $z$]'
-      <dd>returns the exponential integral function $E_n(z)$.
+      <dd>returns the exponential integral function $E$_$n$($z$).
     </dl>
 
     >> ExpIntegralE[2.0, 2.0]
      = 0.0375343
     """
 
+    attributes = A_LISTABLE | A_NUMERIC_FUNCTION | A_PROTECTED | A_READ_PROTECTED
     summary_text = "exponential integral function of order n"
     nargs = {2}
     sympy_name = "expint"
@@ -33,7 +40,7 @@ class ExpIntegralEi(MPMathFunction):
 
     <dl>
       <dt>'ExpIntegralEi[$z$]'
-      <dd>returns the exponential integral function $Ei(z)$.
+      <dd>returns the exponential integral function Ei($z$).
     </dl>
 
     >> ExpIntegralEi[2.0]
@@ -45,13 +52,52 @@ class ExpIntegralEi(MPMathFunction):
     mpmath_name = "ei"
 
 
+class LambertW(Builtin):
+    """
+    <url>
+      :Lambert <i>W</i> Function:
+      https://en.wikipedia.org/wiki/Lambert_W_function</url>, <url>:MathWorld:
+      https://mathworld.wolfram.com/LambertW-Function.html</url>
+
+    <dl>
+      <dt>'LambertW[$k$]'
+      <dd>alias for ProductLog[$z$].
+
+      <dt>'LambertW[$k$, $z$]'
+      <dd>alias for ProductLog[$k$, $z$].
+    </dl>
+
+    >> LambertW[k, z]
+     = ProductLog[k, z]
+
+    >> Plot[LambertW[x], {x, -1/E, E}]
+     = -Graphics-
+
+    See also <url>
+    :ProductLog:
+    /doc/reference-of-built-in-symbols/special-functions/exponential-integral-and-special-functions/productlog</url>.
+    """
+
+    attributes = A_LISTABLE | A_PROTECTED
+    mpmath_name = "lambertw"
+    rules = {
+        "LambertW[z_]": "ProductLog[z]",
+        "LambertW[k_, z_]": "ProductLog[k, z]",
+    }
+    summary_text = "Lambert W function"
+    sympy_name = "LambertW"  # function called LambertW in SymPy
+
+
 class ProductLog(MPMathFunction):
     """
     <url>:WMA link:https://reference.wolfram.com/language/ref/ProductLog.html</url>
 
     <dl>
       <dt>'ProductLog[$z$]'
-      <dd>returns the value of the Lambert W function at $z$.
+      <dd>returns the principle solution for $w$ in $z$ == $wE$^$w$.
+
+      <dt>'ProductLog[$k$, $z$]'
+      <dd>gives the $k$th solution.
     </dl>
 
     The defining equation:
@@ -64,13 +110,15 @@ class ProductLog(MPMathFunction):
     >> ProductLog[E]
      = 1
 
+    >> ProductLog[-1.5]
+     = -0.0327837 + 1.54964 I
+
     The graph of 'ProductLog':
     >> Plot[ProductLog[x], {x, -1/E, E}]
      = -Graphics-
     """
 
-    summary_text = "Lambert's W function"
-    sympy_name = "LambertW"  # function called LambertW in SymPy
+    attributes = A_LISTABLE | A_PROTECTED | A_READ_PROTECTED
     mpmath_name = "lambertw"
 
     rules = {
@@ -79,9 +127,11 @@ class ProductLog(MPMathFunction):
         "ProductLog[z_] * E ^ ProductLog[z_]": "z",
         "Derivative[1][ProductLog]": "ProductLog[#] / (# (ProductLog[#] + 1))&",
     }
+    summary_text = "Lambert's W function"
+    sympy_name = "LambertW"  # function called LambertW in SymPy
 
 
-# TODO: Zernike polynomials not yet implemented in mpmath nor sympy
+# TODO: Zernike polynomials not yet implemented in mpmath nor SymPy
 #
 # class ZernikeR(MPMathFunction):
 #    """

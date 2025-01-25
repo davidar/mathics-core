@@ -5,6 +5,7 @@ PyMathics3 module handling
 import importlib
 import inspect
 import sys
+from typing import Dict
 
 from mathics.core.builtin import Builtin
 from mathics.core.definitions import Definitions
@@ -43,7 +44,7 @@ def eval_LoadModule(module_name: str, definitions: Definitions) -> str:
     return module_name
 
 
-def load_pymathics_module(definitions, module_name: str):
+def load_pymathics_module(definitions: Definitions, module_name: str):
     """
     Loads Mathics builtin objects and their definitions
     from an external Python module in the pymathics module namespace.
@@ -61,8 +62,8 @@ def load_pymathics_module(definitions, module_name: str):
         else dir(loaded_module)
     )
 
-    newsymbols = {}
-    if not ("pymathics_version_data" in vars):
+    newsymbols: Dict[str, Builtin] = {}
+    if "pymathics_version_data" not in vars:
         raise PyMathicsLoadException(module_name)
     for name in vars - set(("pymathics_version_data", "__version__")):
         var = name_is_builtin_symbol(loaded_module, name)

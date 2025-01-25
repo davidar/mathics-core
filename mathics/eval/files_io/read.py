@@ -54,7 +54,12 @@ class MathicsOpen(Stream):
     """
 
     def __init__(
-        self, file: str, mode: str = "r", encoding=None, is_temporary_file: bool = False
+        self,
+        path: str,
+        mode: str = "r",
+        name=None,
+        encoding=None,
+        is_temporary_file: bool = False,
     ):
         if encoding is not None:
             encoding = to_python_encoding(encoding)
@@ -64,7 +69,9 @@ class MathicsOpen(Stream):
             elif encoding is None:
                 raise MessageException("General", "charcode", self.encoding)
         self.encoding = encoding
-        super().__init__(file, mode, self.encoding)
+        if name is None:
+            name = path
+        super().__init__(name, mode=mode, path=path, encoding=self.encoding)
         self.is_temporary_file = is_temporary_file
 
         # The following are set in __enter__ and __exit__
@@ -85,8 +92,9 @@ class MathicsOpen(Stream):
 
         # Add to our internal list of streams
         self.stream = stream_manager.add(
-            name=path,
+            name=self.name,
             mode=self.mode,
+            path=path,
             encoding=self.encoding,
             io=self.fp,
             num=stream_manager.next,
@@ -97,8 +105,10 @@ class MathicsOpen(Stream):
         return self.fp
 
     def __exit__(self, type, value, traceback):
-        self.fp.close()
-        stream_manager.delete_stream(self.stream)
+        if self.fp is not None:
+            self.fp.close()
+        if self.stream is not None:
+            stream_manager.delete_stream(self.stream)
         super().__exit__(type, value, traceback)
 
 
@@ -159,9 +169,9 @@ def parse_read_options(options) -> dict:
             string_quotes=False
         )
         assert isinstance(record_separators, list)
-        assert all(
-            isinstance(s, str) and s[0] == s[-1] == '"' for s in record_separators
-        )
+        # assert all(
+        #     isinstance(s, str) and s[0] == s[-1] == '"' for s in record_separators
+        # )
         record_separators = [s[1:-1] for s in record_separators]
         result["RecordSeparators"] = record_separators
 
@@ -171,8 +181,6 @@ def parse_read_options(options) -> dict:
             string_quotes=False
         )
         assert isinstance(word_separators, list)
-        assert all(isinstance(s, str) and s[0] == s[-1] == '"' for s in word_separators)
-        word_separators = [s[1:-1] for s in word_separators]
         result["WordSeparators"] = word_separators
 
     # NullRecords
@@ -190,7 +198,6 @@ def parse_read_options(options) -> dict:
     # TokenWords
     if "System`TokenWords" in keys:
         token_words = options["System`TokenWords"].to_python(string_quotes=False)
-        assert token_words == []
         result["TokenWords"] = token_words
 
     return result
@@ -201,7 +208,8 @@ def close_stream(stream: Stream, stream_number: int):
     Close stream: `stream` and delete it from the list of streams we manage.
     If the stream was to a temporary file, remove the temporary file.
     """
-    stream.io.close()
+    if stream.io is not None:
+        stream.io.close()
     stream_manager.delete(stream_number)
 
 
@@ -218,8 +226,7 @@ def read_name_and_stream(stream_designator, evaluation: Evaluation) -> tuple:
 
         stream_name, n = strm.elements
 
-        n_int = n.value
-        if n_int < 0:
+        if not isinstance(n, Integer) or (n_int := n.value) < 0:
             evaluation.message("InputStream", "intpm", strm)
             return None, None, None
 
@@ -231,7 +238,7 @@ def read_name_and_stream(stream_designator, evaluation: Evaluation) -> tuple:
         if stream.io is None:
             stream.__enter__()
 
-        if stream.io.closed:
+        elif stream.io.closed:
             evaluation.message("Read", "openx", strm)
             return SymbolFailed, None, None
 
@@ -385,9 +392,7 @@ def read_from_stream(
                         else:
                             yield word
                             continue
-                last_word = word
-                word = ""
-                yield last_word
+                yield word
                 break
 
             if tmp in word_separators:
@@ -396,30 +401,24 @@ def read_from_stream(
                 if stream.io.seekable():
                     stream.io.seek(stream.io.tell() - 1)
                 word += some_token_word_prefix
-                last_word = word
-                word = ""
                 some_token_word_prefix = ""
-                yield last_word
+                yield word
                 break
 
             if accepted is not None and tmp not in accepted:
                 word += some_token_word_prefix
-                last_word = word
-                word = ""
                 some_token_word_prefix = ""
-                yield last_word
+                yield word
                 break
 
             some_token_word_prefix += tmp
             for token_word in token_words:
                 if token_word == some_token_word_prefix:
                     if word:
-                        # Start here
-                        last_word = word
-                        word = ""
-                        some_token_word_prefix = ""
-                        yield last_word
-                    yield token_word
+                        yield [word, token_word]
+                    else:
+                        yield token_word
+                    some_token_word_prefix = ""
                     break
             else:
                 word += some_token_word_prefix

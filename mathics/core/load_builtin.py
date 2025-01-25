@@ -14,13 +14,17 @@ import os.path as osp
 import pkgutil
 from glob import glob
 from types import ModuleType
-from typing import Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 from mathics.core.convert.sympy import mathics_to_sympy, sympy_to_mathics
+from mathics.core.parser.operators import calculate_operator_information
 from mathics.core.pattern import pattern_objects
 from mathics.core.symbols import Symbol
 from mathics.eval.makeboxes import builtins_precedence
 from mathics.settings import ENABLE_FILES_MODULE
+
+if TYPE_CHECKING:
+    from mathics.core.builtin import Builtin
 
 # List of Python modules contain Mathics3 Builtins.
 # This list used outside to gather documentation,
@@ -43,7 +47,9 @@ builtins_by_module: Dict[str, list] = {}
 display_operators_set: Set[str] = set()
 
 
-def add_builtins_from_builtin_module(module: ModuleType, builtins_list: list):
+def add_builtins_from_builtin_module(
+    module: ModuleType, builtins_list: List[Tuple[str, "Builtin"]]
+):
     """
     Process a modules which contains Builtin classes so that the
     class is imported in the Python sense but also that we
@@ -70,7 +76,8 @@ def add_builtins_from_builtin_module(module: ModuleType, builtins_list: list):
 
 
 def add_builtins_from_builtin_modules(modules: List[ModuleType]):
-    builtins_list = []
+    """Load the Builtin classes from `modules`"""
+    builtins_list: List[Tuple[str, "Builtin"]] = []
     for module in modules:
         add_builtins_from_builtin_module(module, builtins_list)
     add_builtins(builtins_list)
@@ -79,7 +86,12 @@ def add_builtins_from_builtin_modules(modules: List[ModuleType]):
 
 # The fact that we are importing inside here, suggests add_builtins
 # should get moved elsewhere.
-def add_builtins(new_builtins):
+def add_builtins(new_builtins: List[Tuple[str, "Builtin"]]):
+    """
+    Populate _builtins, builtins_precedence, pattern_objects
+    mathics_to_python and sympy_to_python from a list of
+    builtins.
+    """
     from mathics.core.builtin import (
         Operator,
         PatternObject,
@@ -106,15 +118,21 @@ def add_builtins(new_builtins):
     _builtins.update(dict(new_builtins))
 
 
-def builtins_dict(builtins_by_module):
+def builtins_dict(builtins_by_module_dict):
+    """Return a dictionary with all the builtins organized by
+    name"""
     return {
         builtin.get_name(): builtin
-        for _, builtins in builtins_by_module.items()
+        for _, builtins in builtins_by_module_dict.items()
         for builtin in builtins
     }
 
 
 def definition_contribute(definitions):
+    """
+    Load the Definition objects associated to all the builtins
+    on `Definitions`
+    """
     # let MakeBoxes contribute first
     _builtins["System`MakeBoxes"].contribute(definitions)
     for name, item in _builtins.items():
@@ -128,6 +146,8 @@ def definition_contribute(definitions):
     # All builtins are loaded. Create dummy builtin definitions for
     # any remaining operators that don't have them. This allows
     # operators like \[Cup] to behave correctly.
+
+    calculate_operator_information()
     for operator in all_operator_names:
         if not definitions.have_definition(ensure_context(operator)):
             op = ensure_context(operator)
@@ -135,6 +155,7 @@ def definition_contribute(definitions):
 
 
 def get_module_names(builtin_path: str, exclude_files: set) -> list:
+    """Return a list of modules from the path `builtin_path`"""
     py_files = [
         osp.basename(f[0:-3]) for f in glob(osp.join(builtin_path, "[a-z]*.py"))
     ]
@@ -165,7 +186,7 @@ def get_submodule_names(obj) -> list:
     So in this example then, in the list the modules returned for
     Python module `mathics.builtin.colors` would be the
     `mathics.builtin.colors.named_colors` module which contains the
-    definition and docs for the "Named Colors" Mathics Bultin
+    definition and docs for the "Named Colors" Mathics Builtin
     Functions.
     """
     modpkgs = []
@@ -223,11 +244,11 @@ def import_builtin_module(import_name: str, modules: List[ModuleType]):
     """
     try:
         module = importlib.import_module(import_name)
-    except Exception as e:
-        print(e)
+    except Exception as exc:
+        print(exc)
         print(f"    Not able to load {import_name}. Check your installation.")
         print(f"    mathics.builtin loads from {__file__[:-11]}")
-        return None
+        return
 
     if module:
         modules.append(module)
@@ -309,7 +330,7 @@ def name_is_builtin_symbol(module: ModuleType, name: str) -> Optional[type]:
 
     # Mathics3 modules modules, however, right now import all builtin modules from
     # __init__
-    # Note Mathics3 modules do not support buitin hierarchies, e.g.
+    # Note Mathics3 modules do not support builtin hierarchies, e.g.
     # pymathics.graph.parametric is allowed but not pymathics.graph.parametric.xxx.
     # This too has to do with the custom doc/doctest that is currently used.
 

@@ -4,8 +4,9 @@ FIXME: Ditch home-grown and lame parsing and hook into sphinx.
 """
 
 import re
-from typing import Optional
+from typing import Callable, Optional, Sequence
 
+from mathics.core.convert.op import get_latex_operator
 from mathics.doc.doc_entries import (
     CONSOLE_RE,
     DL_ITEM_RE,
@@ -167,6 +168,7 @@ def escape_latex(text):
             ("$", r"\$"),
             ("\00f1", r"\~n"),
             ("\u00e7", r"\c{c}"),
+            ("\u2216", r"\\"),
             ("\u00e9", r"\'e"),
             ("\u00ea", r"\^e"),
             ("\u03b3", r"$\gamma$"),
@@ -257,11 +259,11 @@ def escape_latex(text):
                 if content.find("/doc/") == 0:
                     slug = "/".join(content.split("/")[2:]).rstrip("/")
                     return "%s \\ref{%s}" % (text, latex_label_safe(slug))
-                    slug = "/".join(content.split("/")[2:]).rstrip("/")
-                    return "%s of section~\\ref{%s}" % (text, latex_label_safe(slug))
+                    # slug = "/".join(content.split("/")[2:]).rstrip("/")
+                    # return "%s of section~\\ref{%s}" % (text, latex_label_safe(slug))
                 else:
                     return "\\href{%s}{%s}" % (content, text)
-                return "\\href{%s}{%s}" % (content, text)
+        return "\\href{%s}{%s}" % (content, text)
 
     text = QUOTATIONS_RE.sub(repl_quotation, text)
     text = HYPERTEXT_RE.sub(repl_hypertext, text)
@@ -333,6 +335,27 @@ def get_latex_escape_char(text):
         if escape_char not in text:
             return escape_char
     raise ValueError
+
+
+def get_latex_operator_enclosed(operator: str) -> str:
+    r"""
+    If operator is found in operator_to_amslatex, then
+    return the operator converted to its AMS operator surrounded
+    in math-mode, e.g. $ ... $
+
+    Otherwise, return operator as a \code{} string.
+    """
+
+    result = get_latex_operator(operator)
+    if result:
+        if len(result) > 7 and result[:7] == "\\symbol":
+            return result
+        if result[0] == "\\":
+            return f"${result}$"
+
+    assert result.isascii(), f"{operator} -> {result}"
+
+    return r"\code{%s}" % escape_latex_code(result)
 
 
 def latex_label_safe(s: str) -> str:
@@ -503,7 +526,9 @@ class LaTeXDocTest(DocTest):
             output_for_key = get_results_by_test(self.test, self.key, doc_data)
         text = f"%% Test {'/'.join((str(x) for x in self.key))}\n"
         text += "\\begin{testcase}\n"
-        text += "\\test{%s}\n" % escape_latex_code(self.test)
+        test_str = self.test
+        # TODO: replace non-ASCII characters in test_str
+        text += "\\test{%s}\n" % escape_latex_code(test_str)
 
         results = output_for_key.get("results", [])
         for result in results:
@@ -535,6 +560,8 @@ class LaTeXDocumentationEntry(DocumentationEntry):
     Mathics core also uses this in getting usage strings (`??`).
     """
 
+    items: Sequence["LaTeXDocumentationEntry"]
+
     def __init__(self, doc_str: str, title: str, section: Optional[DocSection]):
         super().__init__(doc_str, title, section)
 
@@ -548,7 +575,7 @@ class LaTeXDocumentationEntry(DocumentationEntry):
                 return escape_latex(self.rawdoc)
 
         return "\n".join(
-            item.latex(doc_data) for item in self.items if not item.is_private()
+            item.latex(doc_data) for item in self.items  # if not item.is_private()
         )
 
     def _set_classes(self):
@@ -566,6 +593,8 @@ class LaTeXMathicsDocumentation(MathicsMainDocumentation):
     Subclass of MathicsMainDocumentation which is able to
     produce a the documentation in LaTeX format.
     """
+
+    parts: Sequence["LaTeXDocPart"]
 
     def __init__(self):
         super().__init__()
@@ -627,6 +656,9 @@ class LaTeXMathicsDocumentation(MathicsMainDocumentation):
 
 
 class LaTeXDocChapter(DocChapter):
+    doc: LaTeXDocumentationEntry
+    guide_sections: Sequence["LaTeXDocGuideSection"]
+
     def latex(
         self, doc_data: dict, quiet=False, filter_sections: Optional[str] = None
     ) -> str:
@@ -646,6 +678,7 @@ class LaTeXDocChapter(DocChapter):
                 short,
             )
 
+        sort_section_function: Callable
         if self.part.is_reference:
             sort_section_function = sorted
         else:
@@ -691,6 +724,7 @@ class LaTeXDocPart(DocPart):
         `output` is not used here but passed along to the bottom-most
         level in getting expected test results.
         """
+        chapter_fn: Callable
         if self.is_reference:
             chapter_fn = sorted_chapters
         else:
@@ -708,6 +742,8 @@ class LaTeXDocPart(DocPart):
 
 
 class LaTeXDocSection(DocSection):
+    subsections: Sequence["LaTeXDocSubsection"]
+
     def __init__(
         self,
         chapter,
@@ -733,13 +769,22 @@ class LaTeXDocSection(DocSection):
             print(f"  Formatting Section {self.title}")
         title = escape_latex(self.title)
         if self.operator:
-            title += " (\\code{%s})" % escape_latex_code(self.operator)
+            code_str = get_latex_operator_enclosed(self.operator)
+            title += f" ({code_str})"
         index = (
             r"\index{%s}" % escape_latex(self.title)
             if self.chapter.part.is_reference
             else ""
         )
+
         content = self.doc.latex(doc_data)
+        # This just replaces the occurrences of the unicode
+        # character associated to the operator.
+        # At some point we would like to scan all the unicode characters
+        # and replace them according to the context.
+        if self.operator and not self.operator.isascii():
+            content = content.replace(self.operator, code_str)
+
         sections = "\n\n".join(section.latex(doc_data) for section in self.subsections)
         slug = f"{self.chapter.part.slug}/{self.chapter.slug}/{self.slug}"
         section_string = (
@@ -760,6 +805,8 @@ class LaTeXDocGuideSection(DocGuideSection):
     are examples of Guide Sections, and each contains a number of Sections.
     like NamedColors or Orthogonal Polynomials.
     """
+
+    subsections: Sequence["LaTeXDocSubsection"]
 
     def __init__(
         self,
@@ -824,6 +871,8 @@ class LaTeXDocSubsection(DocSubsection):
     A Subsection is part of a Section.
     """
 
+    subsections: Sequence["LaTeXDocSubsection"]
+
     def __init__(
         self,
         chapter,
@@ -863,14 +912,23 @@ class LaTeXDocSubsection(DocSubsection):
             print(f"    Formatting Subsection Section {self.title}")
 
         title = escape_latex(self.title)
+
         if self.operator:
-            title += " (\\code{%s})" % escape_latex_code(self.operator)
+            code_str = get_latex_operator_enclosed(self.operator)
+            title += f" ({code_str})"
         index = (
             r"\index{%s}" % escape_latex(self.title)
             if self.chapter.part.is_reference
             else ""
         )
         content = self.doc.latex(doc_data)
+        # This just replaces the occurrences of the unicode
+        # character associated to the operator.
+        # At some point we would like to scan all the unicode characters
+        # and replace them according to the context.
+        if self.operator and not self.operator.isascii():
+            content = content.replace(self.operator, code_str)
+
         slug = f"{self.chapter.part.slug}/{self.chapter.slug}/{self.section.slug}/{self.slug}"
 
         section_string = (

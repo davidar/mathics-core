@@ -4,22 +4,28 @@
 Function Application
 """
 
+from itertools import chain
+
+import sympy
+
+from mathics.core.atoms import Integer, Integer1
+from mathics.core.attributes import A_HOLD_ALL, A_N_HOLD_ALL, A_PROTECTED
+from mathics.core.builtin import Builtin, PostfixOperator, PrefixOperator, SympyFunction
+from mathics.core.convert.sympy import SymbolFunction
+from mathics.core.evaluation import Evaluation
+from mathics.core.expression import Expression
+from mathics.core.symbols import Symbol, sympy_slot_prefix
+from mathics.core.systemsymbols import SymbolSlot
+
 # This tells documentation how to sort this module
 sort_order = "mathics.builtin.function-application"
 
 
-from itertools import chain
-
-from mathics.core.attributes import A_HOLD_ALL, A_N_HOLD_ALL, A_PROTECTED
-from mathics.core.builtin import Builtin, PostfixOperator
-from mathics.core.convert.sympy import SymbolFunction
-from mathics.core.evaluation import Evaluation
-from mathics.core.expression import Expression
-from mathics.core.symbols import Symbol
-
-
-class Function(PostfixOperator):
+class Function(PostfixOperator, SympyFunction):
     """
+    <url>:WMA link:
+      https://reference.wolfram.com/language/ref/Function.html</url>
+
     <dl>
       <dt>'Function[$body$]'
       <dt>'$body$ &'
@@ -85,7 +91,6 @@ class Function(PostfixOperator):
     to the function body.
     """
 
-    operator = "&"
     attributes = A_HOLD_ALL | A_PROTECTED
 
     messages = {
@@ -119,9 +124,11 @@ class Function(PostfixOperator):
             # this is not included in WL, and here does not have any impact, but it is needed for
             # translating the function to a compiled version.
             var_names = (
-                var.get_name()
-                if isinstance(var, Symbol)
-                else var.elements[0].get_name()
+                (
+                    var.get_name()
+                    if isinstance(var, Symbol)
+                    else var.elements[0].get_name()
+                )
                 for var in vars
             )
             vars = dict(list(zip(var_names, args[: len(vars)])))
@@ -148,9 +155,21 @@ class Function(PostfixOperator):
             except Exception:
                 return
 
+    def to_sympy(self, expr: Expression, **kwargs):
+        if len(expr.elements) == 1:
+            body = expr.elements[0]
+            slot = Expression(SymbolSlot, Integer1)
+            return sympy.Lambda(slot.to_sympy(), body.to_sympy())
+        else:
+            # TODO: Handle multiple and/or named arguments
+            raise NotImplementedError
 
-class Slot(Builtin):
+
+class Slot(SympyFunction, PrefixOperator):
     """
+    <url>:WMA link:
+      https://reference.wolfram.com/language/ref/Slot.html</url>
+
     <dl>
       <dt>'#$n$'
       <dd>represents the $n$th argument to a pure function.
@@ -175,6 +194,7 @@ class Slot(Builtin):
     """
 
     attributes = A_N_HOLD_ALL | A_PROTECTED
+
     rules = {
         "Slot[]": "Slot[1]",
         "MakeBoxes[Slot[n_Integer?NonNegative],"
@@ -184,9 +204,17 @@ class Slot(Builtin):
     }
     summary_text = "one argument of a pure function"
 
+    def to_sympy(self, expr: Expression, **kwargs):
+        index: Integer = expr.elements[0]
+        return sympy.Symbol(f"{sympy_slot_prefix}{index.get_int_value()}")
 
-class SlotSequence(Builtin):
+
+class SlotSequence(PrefixOperator, Builtin):
     """
+    <url>:WMA link:
+      https://reference.wolfram.com/language/ref/SlotSequence.html</url>
+
+
     <dl>
       <dt>'##'
       <dd>is the sequence of arguments supplied to a pure function.

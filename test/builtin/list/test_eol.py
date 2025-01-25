@@ -2,7 +2,7 @@
 """
 Unit tests for mathics.builtins.list.constructing
 """
-from test.helper import check_evaluation
+from test.helper import check_evaluation, check_evaluation_as_in_cli
 
 import pytest
 
@@ -10,7 +10,12 @@ import pytest
 @pytest.mark.parametrize(
     ("str_expr", "expected_messages", "str_expected", "assert_message"),
     [
-        ("Append[a, b]", ("Nonatomic expression expected.",), "Append[a, b]", None),
+        (
+            "Append[a, b]",
+            ("Nonatomic expression expected at position 1 in Append[a, b].",),
+            "Append[a, b]",
+            None,
+        ),
         (
             "AppendTo[{}, 1]",
             ("{} is not a variable with a value, so its value cannot be changed.",),
@@ -185,7 +190,7 @@ import pytest
         ),
         (
             "a=.;b=.;Prepend[a, b]",
-            ("Nonatomic expression expected.",),
+            ("Nonatomic expression expected at position 1 in Prepend[a, b].",),
             "Prepend[a, b]",
             "Prepend works with non-atomic expressions",
         ),
@@ -228,6 +233,14 @@ import pytest
         ("a ;; b", None, "a ;; b", None),
         # TODO: Rework this test
         ("{a ;; b ;; c ;; d}", None, "{a ;; b ;; c, 1 ;; d}", ";; association"),
+        (
+            "Select[a, True]",
+            (
+                "Nonatomic expression expected at position 1 in Select[a, True, Infinity].",
+            ),
+            "Select[a, True]",
+            None,
+        ),
         ("Take[Range[10], {8, 2, -1}]", None, "{8, 7, 6, 5, 4, 3, 2}", None),
         ("Take[Range[10], {-3, -7, -2}]", None, "{8, 6, 4}", None),
         (
@@ -265,4 +278,19 @@ def test_eol_edicates_private_doctests(
         failure_message=assert_message,
         expected_messages=expected_messages,
         hold_expected=True,
+    )
+
+
+# To check expressions with has `Sequence` as output,
+# we need to use ``check_evaluation_as_in_cli``
+@pytest.mark.parametrize(
+    ("str_expr", "expected_messages", "str_expected", "assert_message"),
+    [
+        ("Delete[{}, 0]", None, "Sequence[]", None),
+        ("Delete[{1, 2}, 0]", None, "Sequence[1, 2]", None),
+    ],
+)
+def test_as_in_cli(str_expr, expected_messages, str_expected, assert_message):
+    check_evaluation_as_in_cli(
+        str_expr, str_expected, expected_messages, assert_message
     )

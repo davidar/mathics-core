@@ -6,6 +6,7 @@ String Manipulation
 import io
 import re
 import unicodedata
+from abc import ABC
 from binascii import unhexlify
 from heapq import heappop, heappush
 from typing import Any, List
@@ -14,26 +15,21 @@ from mathics_scanner import TranslateError
 
 from mathics.core.atoms import Integer, Integer0, Integer1, String
 from mathics.core.attributes import A_LISTABLE, A_PROTECTED
-from mathics.core.builtin import Builtin, Predefined, PrefixOperator, Test
+from mathics.core.builtin import Builtin, Predefined, PrefixOperator
 from mathics.core.convert.expression import to_mathics_list
-from mathics.core.convert.python import from_bool
-from mathics.core.convert.regex import to_regex
 from mathics.core.evaluation import Evaluation
 from mathics.core.expression import Expression
-from mathics.core.expression_predefined import MATHICS3_INFINITY
 from mathics.core.list import ListExpression
 from mathics.core.parser import MathicsFileLineFeeder, parse
-from mathics.core.symbols import Symbol, SymbolTrue
 from mathics.core.systemsymbols import (
     SymbolFailed,
     SymbolInputForm,
     SymbolNone,
     SymbolOutputForm,
+    SymbolToExpression,
 )
-from mathics.eval.strings import eval_ToString
+from mathics.eval.strings import eval_StringContainsQ, eval_ToString
 from mathics.settings import SYSTEM_CHARACTER_ENCODING
-
-SymbolToExpression = Symbol("ToExpression")
 
 # covers all of the variations. Here we just give some minimal basics
 
@@ -128,48 +124,6 @@ def _parallel_match(text, rules, flags, limit):
             k = match.end()
 
         push(i, iter, form)
-
-
-def _pattern_search(name, string, patt, evaluation, options, matched):
-    # Get the pattern list and check validity for each
-    if patt.has_form("List", None):
-        patts = patt.elements
-    else:
-        patts = [patt]
-    re_patts = []
-    for p in patts:
-        py_p = to_regex(p, show_message=evaluation.message)
-        if py_p is None:
-            evaluation.message("StringExpression", "invld", p, patt)
-            return
-        re_patts.append(py_p)
-
-    flags = re.MULTILINE
-    if options["System`IgnoreCase"] is SymbolTrue:
-        flags = flags | re.IGNORECASE
-
-    def _search(patts, str, flags, matched):
-        if any(re.search(p, str, flags=flags) for p in patts):
-            return from_bool(matched)
-        return from_bool(not matched)
-
-    # Check string validity and perform regex searchhing
-    if string.has_form("List", None):
-        py_s = [s.get_string_value() for s in string.elements]
-        if any(s is None for s in py_s):
-            evaluation.message(
-                name, "strse", Integer1, Expression(Symbol(name), string, patt)
-            )
-            return
-        return to_mathics_list(*[_search(re_patts, s, flags, matched) for s in py_s])
-    else:
-        py_s = string.get_string_value()
-        if py_s is None:
-            evaluation.message(
-                name, "strse", Integer1, Expression(Symbol(name), string, patt)
-            )
-            return
-        return _search(re_patts, py_s, flags, matched)
 
 
 def anchor_pattern(patt):
@@ -411,14 +365,16 @@ class HexadecimalCharacter(Builtin):
 
 # This isn't your normal Box class. We'll keep this here rather than
 # in mathics.builtin.box for now.
-class InterpretationBox(PrefixOperator):
+# mmatera commenct: This does not even exist in WMA. \! should be associated
+# to `ToExpression`, but it was not  properly implemented by now...
+class InterpretedBox(PrefixOperator):
     r"""
     <url>
     :WMA link:
     https://reference.wolfram.com/language/ref/InterpretationBox.html</url>
 
     <dl>
-      <dt>'InterpretationBox[$box$]'
+      <dt>'InterpretedBox[$box$]'
       <dd>is the ad hoc fullform for \! $box$. just for internal use...
     </dl>
 
@@ -426,11 +382,10 @@ class InterpretationBox(PrefixOperator):
      = 4
     """
 
-    operator = "\\!"
     summary_text = "interpret boxes as an expression"
 
     def eval(self, boxes, evaluation: Evaluation):
-        """InterpretationBox[boxes_]"""
+        """InterpretedBox[boxes_]"""
         # TODO: the following is a very raw and dummy way to
         # handle these expressions.
         # In the first place, this should handle different kind
@@ -606,98 +561,21 @@ class RemoveDiacritics(Builtin):
         )
 
 
-class _StringFind(Builtin):
+class _StringFind(Builtin, ABC):
     options = {
         "IgnoreCase": "False",
         "MetaCharacters": "None",
     }
 
     messages = {
-        "strse": "String or list of strings expected at position `1` in `2`.",
         "srep": "`1` is not a valid string replacement rule.",
-        "innf": (
-            "Non-negative integer or Infinity expected at " "position `1` in `2`."
-        ),
     }
 
     def _find(py_stri, py_rules, py_n, flags):
         raise NotImplementedError()
 
-    def _apply(self, string, rule, n, evaluation, options, cases):
-        if n.sameQ(Symbol("System`Private`Null")):
-            expr = Expression(Symbol(self.get_name()), string, rule)
-            n = None
-        else:
-            expr = Expression(Symbol(self.get_name()), string, rule, n)
 
-        # convert string
-        if string.has_form("List", None):
-            py_strings = [stri.get_string_value() for stri in string.elements]
-            if None in py_strings:
-                evaluation.message(self.get_name(), "strse", Integer1, expr)
-                return
-        else:
-            py_strings = string.get_string_value()
-            if py_strings is None:
-                evaluation.message(self.get_name(), "strse", Integer1, expr)
-                return
-
-        # convert rule
-        def convert_rule(r):
-            if r.has_form("Rule", None) and len(r.elements) == 2:
-                py_s = to_regex(r.elements[0], show_message=evaluation.message)
-                if py_s is None:
-                    evaluation.message(
-                        "StringExpression", "invld", r.elements[0], r.elements[0]
-                    )
-                    return
-                py_sp = r.elements[1]
-                return py_s, py_sp
-            elif cases:
-                py_s = to_regex(r, show_message=evaluation.message)
-                if py_s is None:
-                    evaluation.message("StringExpression", "invld", r, r)
-                    return
-                return py_s, None
-
-            evaluation.message(self.get_name(), "srep", r)
-            return
-
-        if rule.has_form("List", None):
-            py_rules = [convert_rule(r) for r in rule.elements]
-        else:
-            py_rules = [convert_rule(rule)]
-        if None in py_rules:
-            return None
-
-        # convert n
-        if n is None:
-            py_n = 0
-        elif n.sameQ(MATHICS3_INFINITY):
-            py_n = 0
-        else:
-            py_n = n.get_int_value()
-            if py_n is None or py_n < 0:
-                evaluation.message(self.get_name(), "innf", Integer(3), expr)
-                return
-
-        # flags
-        flags = re.MULTILINE
-        if options["System`IgnoreCase"] is SymbolTrue:
-            flags = flags | re.IGNORECASE
-
-        if isinstance(py_strings, list):
-            return to_mathics_list(
-                *[
-                    self._find(py_stri, py_rules, py_n, flags, evaluation)
-                    for py_stri in py_strings
-                ]
-            )
-        else:
-            return self._find(py_strings, py_rules, py_n, flags, evaluation)
-
-
-class String_(Builtin):
+class String_(Builtin, ABC):
     """
     <url>
     :WMA link:
@@ -755,10 +633,6 @@ class StringContainsQ(Builtin):
      = {True, True, True, False, False, False, False, False, True}
     """
 
-    messages = {
-        "strse": "String or list of strings expected at position `1` in `2`.",
-    }
-
     options = {
         "IgnoreCase": "False",
     }
@@ -771,33 +645,9 @@ class StringContainsQ(Builtin):
 
     def eval(self, string, patt, evaluation: Evaluation, options: dict):
         "StringContainsQ[string_, patt_, OptionsPattern[%(name)s]]"
-        return _pattern_search(
+        return eval_StringContainsQ(
             self.__class__.__name__, string, patt, evaluation, options, True
         )
-
-
-class StringQ(Test):
-    """
-    <url>
-    :WMA link:
-    https://reference.wolfram.com/language/ref/StringQ.html</url>
-    <dl>
-      <dt>'StringQ[$expr$]'
-      <dd>returns 'True' if $expr$ is a 'String', or 'False' otherwise.
-    </dl>
-
-    >> StringQ["abc"]
-     = True
-    >> StringQ[1.5]
-     = False
-    >> Select[{"12", 1, 3, 5, "yz", x, y}, StringQ]
-     = {12, yz}
-    """
-
-    summary_text = "test whether an expression is a string"
-
-    def test(self, expr) -> bool:
-        return isinstance(expr, String)
 
 
 class StringRepeat(Builtin):
@@ -827,16 +677,16 @@ class StringRepeat(Builtin):
 
     summary_text = "build a string by concatenating repetitions"
 
-    def eval(self, s, n, expression, evaluation):
-        "StringRepeat[s_String, n_]"
+    def eval(self, expression, s, n, evaluation):
+        "expression: StringRepeat[s_String, n_]"
         py_n = n.value if isinstance(n, Integer) else 0
         if py_n < 1:
             evaluation.message("StringRepeat", "intp", 2, expression)
         else:
             return String(s.value * py_n)
 
-    def eval_truncated(self, s, n, m, expression, evaluation):
-        "StringRepeat[s_String, n_Integer, m_Integer]"
+    def eval_truncated(self, expression, s, n, m, evaluation):
+        "expression: StringRepeat[s_String, n_Integer, m_Integer]"
         # The above rule insures that n and m are boht Integer type
         py_n = n.value
         py_m = m.value

@@ -15,7 +15,6 @@ from typing import Optional
 
 import sympy
 
-from mathics.builtin.inference import evaluate_predicate
 from mathics.core.atoms import (
     Complex,
     Integer,
@@ -29,11 +28,11 @@ from mathics.core.attributes import (
     A_HOLD_ALL,
     A_LISTABLE,
     A_NUMERIC_FUNCTION,
+    A_ORDERLESS,
     A_PROTECTED,
 )
 from mathics.core.builtin import Builtin, MPMathFunction, SympyFunction
 from mathics.core.convert.sympy import from_sympy
-from mathics.core.element import BaseElement
 from mathics.core.evaluation import Evaluation
 from mathics.core.expression import Expression
 from mathics.core.number import MACHINE_EPSILON
@@ -46,13 +45,16 @@ from mathics.core.symbols import (
     SymbolTrue,
 )
 from mathics.core.systemsymbols import SymbolPiecewise
-from mathics.eval.arithmetic import (
+from mathics.eval.inference import evaluate_predicate
+from mathics.eval.nevaluator import eval_NValues
+from mathics.eval.numeric import (
     eval_Abs,
     eval_negate_number,
     eval_RealSign,
     eval_Sign,
+    eval_UnitStep,
+    eval_UnitStep_multidimensional,
 )
-from mathics.eval.nevaluator import eval_NValues
 
 
 def chop(expr, delta=10.0 ** (-10.0)):
@@ -112,7 +114,7 @@ class Abs(MPMathFunction):
     rules = {
         "Abs[Undefined]": "Undefined",
     }
-    summary_text = "absolute value of a number"
+    summary_text = "get absolute value of a number"
     sympy_name = "Abs"
 
     def eval(self, x, evaluation: Evaluation):
@@ -319,7 +321,10 @@ class N(Builtin):
 
 class Piecewise(SympyFunction):
     """
-    <url>:WMA link:https://reference.wolfram.com/language/ref/Piecewise.html</url>
+    <url>:SymPy:
+    https://docs.sympy.org/latest/modules/functions
+    /elementary.html#piecewise</url>, <url>
+    :WMA:https://reference.wolfram.com/language/ref/Piecewise.html</url>
 
     <dl>
       <dt>'Piecewise[{{expr1, cond1}, ...}]'
@@ -469,7 +474,7 @@ class Rationalize(Builtin):
         if py_x.is_positive:
             return from_sympy(self.find_approximant(py_x))
         else:
-            return -from_sympy(self.find_approximant(-py_x))
+            return from_sympy(-self.find_approximant(-py_x))
 
     @staticmethod
     def find_approximant(x):
@@ -573,9 +578,9 @@ class RealAbs(Builtin):
         "Integrate[RealAbs[x_],x_]": "1/2 x RealAbs[x]",
         "Integrate[RealAbs[u_],{u_,a_,b_}]": "1/2 b RealAbs[b]-1/2 a RealAbs[a]",
     }
-    summary_text = "real absolute value"
+    summary_text = "get absolute value of a real number"
 
-    def eval(self, x: BaseElement, evaluation: Evaluation):
+    def eval(self, x: Number, evaluation: Evaluation):
         """RealAbs[x_]"""
         real_sign = eval_RealSign(x)
         if real_sign is IntegerM1:
@@ -785,3 +790,51 @@ class Sign(SympyFunction):
     def eval_error(self, x, seqs, evaluation: Evaluation):
         "Sign[x_, seqs__]"
         evaluation.message("Sign", "argx", Integer(len(seqs.get_sequence()) + 1))
+
+
+class UnitStep(Builtin):
+    """
+    <url>
+    :Heaviside step function:
+    https://en.wikipedia.org/wiki/Heaviside_step_function</url> (<url>
+    :WMA link:
+    https://reference.wolfram.com/language/ref/UnitStep.html</url>)
+
+    <dl>
+      <dt>'UnitStep[$x$]'
+      <dd>return 0 if $x$ < 0, and 1 if $x$ >= 0.
+      <dt>'UnitStep[$x1$, $x2$, ...]'
+      <dd>return the multidimensional unit step function which is 1 only if none of the $xi$ are negative.
+    </dl>
+
+    Evaluation numerically:
+    >> UnitStep[0.7]
+     = 1
+
+    We can use 'UnitStep' on irrational numbers and infinities:
+    >> Map[UnitStep, {Pi, Infinity, -Infinity}]
+     = {1, 1, 0}
+
+    >> Table[UnitStep[x], {x, -3, 3}]
+     = {0, 0, 0, 1, 1, 1, 1}
+
+    Plot in one dimension:
+    >> Plot[UnitStep[x], {x, -4, 4}]
+     = -Graphics-
+
+    ## UnitStep is a piecewise function
+    ## PiecewiseExpand[UnitStep[x]]
+    ## = ...
+    """
+
+    summary_text = "unit step function of a number"
+
+    attributes = A_LISTABLE | A_NUMERIC_FUNCTION | A_ORDERLESS | A_PROTECTED
+
+    def eval(self, x, evaluation: Evaluation):
+        "UnitStep[x_]"
+        return eval_UnitStep(x)
+
+    def eval_multidimenional(self, seqs, evaluation: Evaluation):
+        "UnitStep[seqs__]"
+        return eval_UnitStep_multidimensional(seqs)

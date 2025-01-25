@@ -99,6 +99,10 @@ def test_close():
     ), f"temporary filename {temp_filename} should not appear"
 
 
+@pytest.mark.skipif(
+    sys.platform in ("emscripten",),
+    reason="Pyodide has restricted filesystem access",
+)
 @pytest.mark.parametrize(
     ("str_expr", "msgs", "str_expected", "fail_msg"),
     [
@@ -145,6 +149,12 @@ def test_close():
             'OpenRead[""]',
             ("File specification  is not a string of one or more characters.",),
             "OpenRead[]",
+            "",
+        ),
+        (
+            'Close[OpenRead["https://raw.githubusercontent.com/Mathics3/mathics-core/master/README.rst"]];',
+            None,
+            "Null",
             "",
         ),
         (
@@ -278,17 +288,23 @@ def test_close():
         #     "{Read, InputStream, String, {Real}}",
         #     "",
         # ),
-        (
-            r'stream = StringToStream["\"abc123\""];ReadList[stream, "Invalid"]//{#1[[0]],#1[[2]]}&',
-            ("Invalid is not a valid format specification.",),
-            "{ReadList, Invalid}",
-            "",
-        ),
         ("Close[stream];", None, "Null", ""),
         (
             'ReadList[StringToStream["a 1 b 2"], {Word, Number}, 1]',
             None,
             "{{a, 1}}",
+            "",
+        ),
+        (
+            'ReadList[StringToStream["(**)"], Expression]',
+            None,
+            "{Null}",
+            "",
+        ),
+        (
+            'ReadList[StringToStream["Hold[1+2]"], Expression]',
+            None,
+            "{Hold[1 + 2]}",
             "",
         ),
         ('stream = StringToStream["Mathics is cool!"];', None, "Null", ""),
@@ -320,6 +336,16 @@ def test_close():
         ),
         ("FilePrint[pathname]", None, "Null", ""),
         ("DeleteFile[pathname];Clear[pathname];", None, "Null", ""),
+        ('tmpfilename = $TemporaryDirectory <> "/tmp0";', None, "Null", ""),
+        ("Close[OpenWrite[tmpfilename]];", None, "Null", ""),
+        (
+            'SetFileDate[tmpfilename, {2002, 1, 1, 0, 0, 0.}, "Access"];',
+            None,
+            "Null",
+            "",
+        ),
+        ('FileDate[tmpfilename, "Access"]', None, "{2002, 1, 1, 0, 0, 0.}", ""),
+        ("DeleteFile[tmpfilename]", None, "Null", ""),
     ],
 )
 def test_private_doctests_files(str_expr, msgs, str_expected, fail_msg):
@@ -427,6 +453,55 @@ def test_streams():
         failure_message="Expecting stream found in list to be the one we just added",
     )
     evaluate("Close[newStream]")
+
+
+def test_write_string():
+    """
+    Check OpenWrite[] and WriteString[] using a path name.
+    """
+    # 1. Create a temporary file name in Python.
+    # 2. Open that for writing in Mathics3 using OpenWrite[].
+    # 3. Write some data to that using WriteString[] and
+    #    close the stream using Close[]
+    # 4. Then back in Python, see that the file was written and
+    #    that it has the data that was written via WriteString[].
+    # 5. Finally, remove the file.
+
+    # 1. Create temporary file name
+    tempfile = NamedTemporaryFile(mode="r", delete=False)
+    tempfile_path = tempfile.name
+
+    # 2. Open that for writing in Mathics3 using OpenWrite[].
+    check_evaluation(
+        str_expr=f'stream = OpenWrite["{tempfile_path}"];',
+        to_string_expr=False,
+        to_string_expected=False,
+    )
+
+    # 3. Write some data to that using WriteString[] and
+    #    close the stream using Close[]
+    text = "testing\n"
+    check_evaluation(
+        str_expr=f'WriteString["{tempfile_path}", "{text}"];',
+        to_string_expr=False,
+        to_string_expected=False,
+    )
+    check_evaluation(
+        str_expr="Close[stream];",
+    )
+
+    # 4. Back in Python, see that the file was written and
+    #    that it has the data that was written via WriteString[].
+
+    assert osp.exists(tempfile_path)
+    assert open(tempfile_path, "r").read() == text
+
+    # 5. Finally, remove the file.
+    try:
+        os.unlink(tempfile_path)
+    except PermissionError:
+        # This can happen in MS Windows
+        pass
 
 
 # rocky: I don't understand what these are supposed to test.

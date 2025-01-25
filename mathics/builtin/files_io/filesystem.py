@@ -36,6 +36,7 @@ from mathics.core.systemsymbols import (
     SymbolPackages,
 )
 from mathics.eval.directories import DIRECTORY_STACK
+from mathics.eval.files_io.files import eval_Get
 
 SymbolAbsoluteTime = Symbol("AbsoluteTime")
 
@@ -59,7 +60,7 @@ class AbsoluteFileName(Builtin):
         "fstr": ("File specification x is not a string of one or more characters."),
         "nffil": "File not found during `1`.",
     }
-    summary_text = "absolute path"
+    summary_text = "get absolute file path"
 
     def eval(self, name, evaluation):
         "AbsoluteFileName[name_]"
@@ -344,63 +345,6 @@ class Directory(Builtin):
         "Directory[]"
         result = os.getcwd()
         return String(result)
-
-
-class DirectoryName(Builtin):
-    """
-    <url>:WMA link:https://reference.wolfram.com/language/ref/DirectoryName.html</url>
-
-    <dl>
-      <dt>'DirectoryName["$name$"]'
-      <dd>extracts the directory name from a filename.
-    </dl>
-
-    >> DirectoryName["a/b/c"]
-     = a/b
-
-    >> DirectoryName["a/b/c", 2]
-     = a
-    """
-
-    messages = {
-        "string": "String expected at position 1 in `1`.",
-        "intpm": ("Positive machine-sized integer expected at " "position 2 in `1`."),
-    }
-
-    options = {
-        "OperatingSystem": "$OperatingSystem",
-    }
-    summary_text = "directory part of a filename"
-
-    def eval_with_n(self, name, n, evaluation: Evaluation, options: dict):
-        "DirectoryName[name_, n_, OptionsPattern[DirectoryName]]"
-
-        if n is None:
-            expr = to_expression("DirectoryName", name)
-            py_n = 1
-        else:
-            expr = to_expression("DirectoryName", name, n)
-            py_n = n.to_python()
-
-        if not (isinstance(py_n, int) and py_n > 0):
-            evaluation.message("DirectoryName", "intpm", expr)
-            return
-
-        py_name = name.to_python()
-        if not (isinstance(py_name, str) and py_name[0] == py_name[-1] == '"'):
-            evaluation.message("DirectoryName", "string", expr)
-            return
-        py_name = py_name[1:-1]
-
-        result = py_name
-        for i in range(py_n):
-            (result, tmp) = osp.split(result)
-
-        return String(result)
-
-    def eval(self, name, evaluation: Evaluation, options: dict):
-        "DirectoryName[name_, OptionsPattern[DirectoryName]]"
-        return self.eval_with_n(name, None, evaluation, options)
 
 
 class DirectoryStack(Builtin):
@@ -915,14 +859,14 @@ class Needs(Builtin):
 
     def eval(self, context, evaluation):
         "Needs[context_String]"
-        contextstr = context.get_string_value()
-        if contextstr == "":
+        context_str = context.value
+        if context_str == "":
             return SymbolNull
-        if contextstr[0] == "`":
+        if context_str[0] == "`":
             curr_ctxt = evaluation.definitions.get_current_context()
-            contextstr = curr_ctxt + contextstr[1:]
-            context = String(contextstr)
-        if not valid_context_name(contextstr):
+            context_str = curr_ctxt + context_str[1:]
+            context = String(context_str)
+        if not valid_context_name(context_str):
             evaluation.message("Needs", "ctx", Expression(SymbolNeeds, context), 1, "`")
             return
         test_loaded = Expression(SymbolMemberQ, SymbolPackages, context)
@@ -930,7 +874,7 @@ class Needs(Builtin):
         if test_loaded is SymbolTrue:
             # Already loaded
             return SymbolNull
-        result = Expression(SymbolGet, context).evaluate(evaluation)
+        result = eval_Get(context_str, evaluation)
 
         if result is SymbolFailed:
             evaluation.message("Needs", "nocont", context)

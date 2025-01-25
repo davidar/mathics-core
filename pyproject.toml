@@ -18,13 +18,16 @@ dependencies = [
     # Pillow 9.1.0 supports BigTIFF with big-endian byte order.
     # ExampleData image hedy.tif is in this format.
     # Pillow 9.2 handles sunflowers.jpg
+    "stopit; platform_system != 'Emscripten'",
     "pillow >= 9.2",
     "pint",
     "python-dateutil",
+    # Pympler is used in ByteCount[] and MemoryInUse[].
+    "Pympler",
     "requests",
     "scipy",
     "setuptools",
-    "sympy>=1.11,<1.13",
+    "sympy>=1.13,<1.14",
 ]
 license = {text = "GPL"}
 name = "Mathics3"
@@ -98,8 +101,8 @@ include = ["mathics*"]
     "autoload-cli/*.m",
     "autoload/formats/*/Import.m",
     "autoload/formats/*/Export.m",
-    "packages/*/*.m",
-    "packages/*/Kernel/init.m",
+    "Packages/*/*.m",
+    "Packages/*/Kernel/init.m",
 ]
 "mathics.doc" = [
     "documentation/*.mdoc",
@@ -111,3 +114,14 @@ include = ["mathics*"]
 
 [tool.setuptools.dynamic]
 version = {attr = "mathics.version.__version__"}
+
+[tool.mypy]
+force_union_syntax = true
+
+[[tool.mypy.overrides]]
+module = ["mpmath", "llvmlite.*", "trepan.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["mathics.benchmark", "mathics.builtin.*", "mathics.eval.*", "test.*"]
+ignore_errors = true

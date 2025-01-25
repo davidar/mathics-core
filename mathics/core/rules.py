@@ -94,11 +94,14 @@ class BaseRule(KeyComparable, ABC):
 
     def __init__(
         self,
-        pattern: Expression,
+        pattern: BaseElement,
         system: bool = False,
         evaluation: Optional[Evaluation] = None,
+        attributes: Optional[int] = None,
     ) -> None:
-        self.pattern = BasePattern.create(pattern, evaluation=evaluation)
+        self.pattern = BasePattern.create(
+            pattern, attributes=attributes, evaluation=evaluation
+        )
         self.system = system
 
     def apply(
@@ -159,7 +162,15 @@ class BaseRule(KeyComparable, ABC):
                 # only first possibility counts
 
         try:
-            self.pattern.match(yield_match, expression, {}, evaluation, fully=fully)
+            self.pattern.match(
+                expression,
+                pattern_context={
+                    "yield_func": yield_match,
+                    "vars_dict": {},
+                    "evaluation": evaluation,
+                    "fully": fully,
+                },
+            )
         except StopGenerator_BaseRule as exc:
             # FIXME: figure where these values are not getting set or updated properly.
             # For now we have to take a pessimistic view
@@ -186,12 +197,15 @@ class BaseRule(KeyComparable, ABC):
     ):
         raise NotImplementedError
 
-    def get_sort_key(self) -> tuple:
+    def get_replace_value(self) -> BaseElement:
+        raise ValueError
+
+    def get_sort_key(self, pattern_sort=True) -> tuple:
         # FIXME: check if this makes sense:
-        return tuple((self.system, self.pattern.get_sort_key(True)))
+        return tuple((self.system, self.pattern.get_sort_key(pattern_sort)))
 
 
-# FIXME: the class name would be better called RewiteRule.
+# FIXME: the class name would be better called RewriteRule.
 class Rule(BaseRule):
     """There are two kinds of Rules.  This kind of is a rewrite rule
     and transforms an Expression into another Expression based on the
@@ -218,12 +232,15 @@ class Rule(BaseRule):
 
     def __init__(
         self,
-        pattern: Expression,
-        replace: Expression,
+        pattern: BaseElement,
+        replace: BaseElement,
         system=False,
         evaluation: Optional[Evaluation] = None,
+        attributes: Optional[int] = None,
     ) -> None:
-        super(Rule, self).__init__(pattern, system=system, evaluation=evaluation)
+        super(Rule, self).__init__(
+            pattern, system=system, evaluation=evaluation, attributes=attributes
+        )
         self.replace = replace
 
     def apply_rule(
@@ -254,6 +271,10 @@ class Rule(BaseRule):
             new = new.copy(reevaluate=True)
 
         return new
+
+    def get_replace_value(self) -> BaseElement:
+        """return the replace value"""
+        return self.replace
 
     def __repr__(self) -> str:
         return "<Rule: %s -> %s>" % (self.pattern, self.replace)
@@ -310,14 +331,14 @@ class FunctionApplyRule(BaseRule):
         check_options: Optional[Callable],
         system: bool = False,
         evaluation: Optional[Evaluation] = None,
+        attributes: Optional[int] = None,
     ) -> None:
         super(FunctionApplyRule, self).__init__(
-            pattern, system=system, evaluation=evaluation
+            pattern, system=system, attributes=attributes, evaluation=evaluation
         )
         self.name = name
         self.function = function
         self.check_options = check_options
-        self.pass_expression = "expression" in function_arguments(function)
 
     # If you update this, you must also update traced_apply_function
     # (that's in the same file TraceBuiltins is)
@@ -331,14 +352,14 @@ class FunctionApplyRule(BaseRule):
         # argument names corresponding to the symbol names without
         # context marks.
         vars_noctx = dict(((strip_context(s), vars[s]) for s in vars))
-        if self.pass_expression:
-            vars_noctx["expression"] = expression
         if options:
             return self.function(evaluation=evaluation, options=options, **vars_noctx)
         else:
             return self.function(evaluation=evaluation, **vars_noctx)
 
     def __repr__(self) -> str:
+        # Cython doesn't allow f-string below and reports:
+        #  Cannot convert Unicode string to 'str' implicitly. This is not portable and requires explicit encoding.
         return "<FunctionApplyRule: %s -> %s>" % (self.pattern, self.function)
 
     def __getstate__(self):

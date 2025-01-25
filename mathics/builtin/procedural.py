@@ -16,14 +16,13 @@ Procedural functions are integrated into \\Mathics symbolic programming \
 environment.
 """
 
-
 from mathics.core.attributes import (
     A_HOLD_ALL,
     A_HOLD_REST,
     A_PROTECTED,
     A_READ_PROTECTED,
 )
-from mathics.core.builtin import BinaryOperator, Builtin, IterationFunction
+from mathics.core.builtin import Builtin, InfixOperator, IterationFunction
 from mathics.core.evaluation import Evaluation
 from mathics.core.expression import Expression
 from mathics.core.interrupt import (
@@ -34,7 +33,8 @@ from mathics.core.interrupt import (
     WLThrowInterrupt,
 )
 from mathics.core.symbols import Symbol, SymbolFalse, SymbolNull, SymbolTrue
-from mathics.core.systemsymbols import SymbolMatchQ
+from mathics.core.systemsymbols import SymbolMatchQ, SymbolPause
+from mathics.eval.datetime import eval_pause, valid_time_from_expression
 from mathics.eval.patterns import match
 
 SymbolWhich = Symbol("Which")
@@ -152,7 +152,37 @@ class Catch(Builtin):
         return ret
 
 
-class CompoundExpression(BinaryOperator):
+class CheckAbort(Builtin):
+    """
+    <url>:WMA link:
+    https://reference.wolfram.com/language/ref/CheckAbort.html</url>
+
+    <dl>
+      <dt>'CheckAbort[$expr$, $failexpr$]'
+        <dd>evaluates $expr$, returning $failexpr$ if an abort occurs.
+    </dl>
+
+    >> CheckAbort[Abort[]; 1, 2] + x
+     = 2 + x
+
+    >> CheckAbort[1, 2] + x
+     = 1 + x
+    """
+
+    attributes = A_HOLD_ALL | A_PROTECTED
+
+    summary_text = "catch an Abort[] exception"
+
+    def eval(self, expr, failexpr, evaluation):
+        "CheckAbort[expr_, failexpr_]"
+
+        try:
+            return expr.evaluate(evaluation)
+        except AbortInterrupt:
+            return failexpr
+
+
+class CompoundExpression(InfixOperator):
     """
     <url>:WMA link:
     https://reference.wolfram.com/language/ref/CompoundExpression.html</url>
@@ -170,7 +200,6 @@ class CompoundExpression(BinaryOperator):
     """
 
     attributes = A_HOLD_ALL | A_PROTECTED | A_READ_PROTECTED
-    operator = ";"
 
     summary_text = "execute expressions in sequence"
 
@@ -406,6 +435,40 @@ class Interrupt(Builtin):
         "Interrupt[]"
 
         raise AbortInterrupt
+
+
+class Pause(Builtin):
+    """
+    <url>:WMA link:https://reference.wolfram.com/language/ref/Pause.html</url>
+
+    <dl>
+    <dt>'Pause[n]'
+      <dd>pauses for at least $n$ seconds.
+    </dl>
+
+    >> Pause[0.5]
+    """
+
+    messages = {
+        "numnm": (
+            "Non-negative machine-sized number expected at " "position 1 in `1`."
+        ),
+    }
+
+    summary_text = "pause for a number of seconds"
+
+    # Number of timeout polls per second that we perform in looking
+    # for a timeout.
+
+    def eval(self, n, evaluation: Evaluation):
+        "Pause[n_]"
+        try:
+            sleep_time = valid_time_from_expression(n, evaluation)
+        except ValueError:
+            evaluation.message("Pause", "numnm", Expression(SymbolPause, n))
+            return
+        eval_pause(sleep_time, evaluation)
+        return SymbolNull
 
 
 class Return(Builtin):

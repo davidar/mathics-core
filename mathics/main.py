@@ -17,11 +17,13 @@ import os.path as osp
 import re
 import subprocess
 import sys
+from typing import List
 
+import mathics.core as mathics_core
 from mathics import __version__, license_string, settings, version_string
 from mathics.builtin.trace import TraceBuiltins, traced_apply_function
 from mathics.core.atoms import String
-from mathics.core.definitions import Definitions, Symbol, autoload_files
+from mathics.core.definitions import Definitions, Symbol
 from mathics.core.evaluation import Evaluation, Output
 from mathics.core.expression import Expression
 from mathics.core.load_builtin import import_and_load_builtins
@@ -31,6 +33,8 @@ from mathics.core.streams import stream_manager
 from mathics.core.symbols import SymbolNull, strip_context
 from mathics.eval.files_io.files import set_input_var
 from mathics.eval.files_io.read import channel_to_stream
+from mathics.session import autoload_files
+from mathics.settings import DATA_DIR, USER_PACKAGE_DIR, ensure_directory
 from mathics.timing import show_lru_cache_statistics
 
 # from mathics.timing import TimeitContextManager
@@ -46,7 +50,7 @@ def get_srcdir():
 
 
 def show_echo(query, evaluation):
-    echovar = evaluation.definitions.get_ownvalue("System`$Echo").replace
+    echovar = evaluation.definitions.get_ownvalue("System`$Echo")
     if not isinstance(echovar, Expression) or not echovar.has_form("List", None):
         return
 
@@ -60,7 +64,7 @@ def show_echo(query, evaluation):
             stream = stream_manager.lookup_stream(strm.elements[1].value)
             if stream is None or stream.io is None or stream.io.closed:
                 continue
-        if stream is not None:
+        if stream is not None and stream.io is not None:
             stream.io.write(query + "\n")
 
 
@@ -100,7 +104,7 @@ class TerminalShell(MathicsLineFeeder):
                     )
 
                     readline.parse_and_bind("tab: complete")
-                    self.completion_candidates = []
+                    self.completion_candidates: List[str] = []
         except ImportError:
             pass
 
@@ -123,7 +127,7 @@ class TerminalShell(MathicsLineFeeder):
             "NONE": (["", "", "", ""], ["", "", "", ""]),
             "LINUX": (
                 ["\033[32m", "\033[1m", "\033[0m\033[32m", "\033[39m"],
-                ["\033[31m", "\033[1m", "\033[0m\033[32m", "\033[39m"],
+                ["\033[31m", "\033[1m", "\033[0m\033[31m", "\033[39m"],
             ),
             "LIGHTBG": (
                 ["\033[34m", "\033[1m", "\033[22m", "\033[39m"],
@@ -136,7 +140,7 @@ class TerminalShell(MathicsLineFeeder):
         if term_colors is None:
             out_msg = "The 'colors' argument must be {0} or None"
             print(out_msg.format(repr(list(color_schemes.keys()))))
-            quit()
+            sys.exit()
 
         self.incolors, self.outcolors = term_colors
         self.definitions = definitions
@@ -255,7 +259,7 @@ class TerminalShell(MathicsLineFeeder):
 
 
 class TerminalOutput(Output):
-    def max_stored_size(self, settings):
+    def max_stored_size(self, output_settings):
         return None
 
     def __init__(self, shell):
@@ -283,6 +287,45 @@ def eval_loop(feeder: MathicsFileLineFeeder, shell: TerminalShell):
             evaluation.evaluate(query, timeout=settings.TIMEOUT)
     except KeyboardInterrupt:
         print("\nKeyboardInterrupt")
+
+
+def interactive_eval_loop(
+    shell: TerminalShell, full_form: bool, strict_wl_output: bool
+):
+    """
+    A read eval/loop for an interactive session.
+    `shell` is a shell session
+    """
+    while True:
+        try:
+            evaluation = Evaluation(shell.definitions, output=TerminalOutput(shell))
+            query, source_code = evaluation.parse_feeder_returning_code(shell)
+            if mathics_core.PRE_EVALUATION_HOOK is not None:
+                mathics_core.PRE_EVALUATION_HOOK(query, evaluation)
+
+            show_echo(source_code, evaluation)
+            if len(source_code) and source_code[0] == "!":
+                subprocess.run(source_code[1:], shell=True)
+                shell.definitions.increment_line_no(1)
+                continue
+            if query is None:
+                continue
+            if full_form:
+                print(query)
+            result = evaluation.evaluate(query, timeout=settings.TIMEOUT)
+            if result is not None:
+                shell.print_result(result, strict_wl_output=strict_wl_output)
+        except KeyboardInterrupt:
+            print("\nKeyboardInterrupt")
+        except EOFError:
+            print("\n\nGoodbye!\n")
+            break
+        except SystemExit:
+            print("\n\nGoodbye!\n")
+            # raise to pass the error code on, e.g. Quit[1]
+            raise
+        finally:
+            shell.reset_lineno()
 
 
 def main() -> int:
@@ -319,12 +362,12 @@ Please contribute to Mathics!""",
         action="store_true",
     )
 
+    # --initfile is different from the combination FILE --persist since the first one
+    # leaves the history empty and sets the current $Line to 1.
     argparser.add_argument(
-        "--pyextensions",
-        "-l",
-        action="append",
-        metavar="PYEXT",
-        help="directory to load extensions in python",
+        "--initfile",
+        help="the same that FILE and --persist together",
+        type=argparse.FileType("r"),
     )
 
     argparser.add_argument(
@@ -333,12 +376,18 @@ Please contribute to Mathics!""",
         action="store_true",
     )
 
-    # --initfile is different from the combination FILE --persist since the first one
-    # leaves the history empty and sets the current $Line to 1.
     argparser.add_argument(
-        "--initfile",
-        help="the same that FILE and --persist together",
-        type=argparse.FileType("r"),
+        "--post-mortem",
+        help="go to post-mortem debug on a terminating system exception (needs trepan3k)",
+        action="store_true",
+    )
+
+    argparser.add_argument(
+        "--pyextensions",
+        "-l",
+        action="append",
+        metavar="PYEXT",
+        help="directory to load extensions in python",
     )
 
     argparser.add_argument(
@@ -407,7 +456,8 @@ Please contribute to Mathics!""",
         action="store_true",
         help="print cache statistics",
     )
-    args, script_args = argparser.parse_known_args()
+
+    args, _ = argparser.parse_known_args()
 
     quit_command = "CTRL-BREAK" if sys.platform in ("win32", "nt") else "CONTROL-D"
 
@@ -421,7 +471,7 @@ Please contribute to Mathics!""",
         extension_modules = default_pymathics_modules
 
     if args.trace_builtins:
-        FunctionApplyRule.apply_rule = traced_apply_function
+        FunctionApplyRule.apply_rule = traced_apply_function  # type: ignore[method-assign]
 
         def dump_tracing_stats():
             TraceBuiltins.dump_tracing_stats(sort_by="count", evaluation=None)
@@ -431,7 +481,9 @@ Please contribute to Mathics!""",
     if args.show_statistics:
         atexit.register(show_lru_cache_statistics)
 
-    definitions = Definitions(add_builtin=True, extension_modules=extension_modules)
+    definitions = Definitions(
+        add_builtin=True, extension_modules=tuple(extension_modules)
+    )
     definitions.set_line_no(0)
 
     shell = TerminalShell(
@@ -446,6 +498,17 @@ Please contribute to Mathics!""",
         feeder = MathicsFileLineFeeder(args.initfile)
         eval_loop(feeder, shell)
         definitions.set_line_no(0)
+
+    if args.post_mortem:
+        try:
+            from trepan.post_mortem import post_mortem_excepthook
+        except ImportError:
+            print(
+                "trepan3k is needed for post-mortem debugging --post-mortem option ignored."
+            )
+            print("And you may want also trepan3k-mathics3-plugin as well.")
+        else:
+            sys.excepthook = post_mortem_excepthook
 
     if args.FILE is not None:
         set_input_var(args.FILE.name)
@@ -493,33 +556,9 @@ Please contribute to Mathics!""",
         print(license_string + "\n")
         print(f"Quit by evaluating Quit[] or by pressing {quit_command}.\n")
 
-    while True:
-        try:
-            evaluation = Evaluation(shell.definitions, output=TerminalOutput(shell))
-            query, source_code = evaluation.parse_feeder_returning_code(shell)
-            show_echo(source_code, evaluation)
-            if len(source_code) and source_code[0] == "!":
-                subprocess.run(source_code[1:], shell=True)
-                shell.definitions.increment_line_no(1)
-                continue
-            if query is None:
-                continue
-            if args.full_form:
-                print(query)
-            result = evaluation.evaluate(query, timeout=settings.TIMEOUT)
-            if result is not None:
-                shell.print_result(result, strict_wl_output=args.strict_wl_output)
-        except KeyboardInterrupt:
-            print("\nKeyboardInterrupt")
-        except EOFError:
-            print("\n\nGoodbye!\n")
-            break
-        except SystemExit:
-            print("\n\nGoodbye!\n")
-            # raise to pass the error code on, e.g. Quit[1]
-            raise
-        finally:
-            shell.reset_lineno()
+    ensure_directory(DATA_DIR)
+    ensure_directory(USER_PACKAGE_DIR)
+    interactive_eval_loop(shell, args.full_form, args.strict_wl_output)
     return exit_rc
 
 

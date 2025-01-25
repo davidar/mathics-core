@@ -3,18 +3,18 @@
 Structural Expression Functions
 """
 
-from mathics.core.atoms import Integer
-from mathics.core.builtin import BinaryOperator, Builtin, Predefined
+from mathics.core.atoms import Integer, Integer1
+from mathics.core.builtin import Builtin, InfixOperator, Predefined
 from mathics.core.exceptions import InvalidLevelspecError
 from mathics.core.expression import Evaluation, Expression
 from mathics.core.list import ListExpression
 from mathics.core.rules import BasePattern
 from mathics.core.symbols import Atom, SymbolFalse, SymbolTrue
-from mathics.core.systemsymbols import SymbolMap
+from mathics.core.systemsymbols import SymbolMap, SymbolSortBy
 from mathics.eval.parts import python_levelspec, walk_levels
 
 
-class MapApply(BinaryOperator):
+class MapApply(InfixOperator):
     """
     <url>
     :WMA link:
@@ -32,7 +32,6 @@ class MapApply(BinaryOperator):
     """
 
     grouping = "Right"
-    operator = "@@@"
 
     rules = {
         "MapApply[f_, expr_]": "Apply[f, expr, {1}]",
@@ -114,7 +113,7 @@ class FreeQ(Builtin):
     def eval(self, expr, form, evaluation: Evaluation):
         "FreeQ[expr_, form_]"
 
-        form = BasePattern.create(form)
+        form = BasePattern.create(form, evaluation=evaluation)
         if expr.is_free(form, evaluation):
             return SymbolTrue
         else:
@@ -265,7 +264,9 @@ class SortBy(Builtin):
         "SortBy[li_, f_]"
 
         if isinstance(li, Atom):
-            evaluation.message("Sort", "normal")
+            evaluation.message(
+                "Sort", "normal", Integer1, Expression(SymbolSortBy, li, f)
+            )
             return
         elif li.get_head_name() != "System`List":
             expr = Expression(SymbolSortBy, li, f)

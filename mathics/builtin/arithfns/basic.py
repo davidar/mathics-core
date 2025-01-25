@@ -31,8 +31,8 @@ from mathics.core.attributes import (
     A_READ_PROTECTED,
 )
 from mathics.core.builtin import (
-    BinaryOperator,
     Builtin,
+    InfixOperator,
     MPMathFunction,
     PrefixOperator,
     SympyFunction,
@@ -59,7 +59,7 @@ from mathics.core.systemsymbols import (
     SymbolPattern,
     SymbolSequence,
 )
-from mathics.eval.arithmetic import eval_Plus, eval_Times
+from mathics.eval.arithfns.basic import eval_Plus, eval_Times
 from mathics.eval.nevaluator import eval_N
 from mathics.eval.numerify import numerify
 
@@ -94,7 +94,7 @@ class CubeRoot(Builtin):
         ),
     }
 
-    summary_text = "cube root"
+    summary_text = "compute cube root of a number"
 
     def eval(self, n, evaluation):
         "CubeRoot[n_Complex]"
@@ -107,7 +107,7 @@ class CubeRoot(Builtin):
         )
 
 
-class Divide(BinaryOperator):
+class Divide(InfixOperator):
     """
     <url>
     :Division:
@@ -158,7 +158,6 @@ class Divide(BinaryOperator):
     }
 
     grouping = "Left"
-    operator = "/"
 
     rules = {
         "Divide[x_, y_]": "Times[x, Power[y, -1]]",
@@ -167,7 +166,7 @@ class Divide(BinaryOperator):
         ),
     }
 
-    summary_text = "divide"
+    summary_text = "divide a number"
 
 
 class Minus(PrefixOperator):
@@ -206,20 +205,18 @@ class Minus(PrefixOperator):
         ),
     }
 
-    operator = "-"
-
     rules = {
         "Minus[x_]": "Times[-1, x]",
     }
 
-    summary_text = "arithmetic negate"
+    summary_text = "perform an arithmetic negation on a number"
 
     def eval_int(self, x: Integer, evaluation):
         "Minus[x_Integer]"
         return Integer(-x.value)
 
 
-class Plus(BinaryOperator, SympyFunction):
+class Plus(InfixOperator, SympyFunction):
     """
     <url>
     :Addition:
@@ -280,9 +277,7 @@ class Plus(BinaryOperator, SympyFunction):
         None: "0",
     }
 
-    operator = "+"
-
-    summary_text = "add"
+    summary_text = "add a number"
 
     # FIXME Note this is deprecated in 1.11
     # Remember to up sympy doc link when this is corrected
@@ -292,16 +287,16 @@ class Plus(BinaryOperator, SympyFunction):
         "Plus[items__]"
 
         def negate(item):  # -> Expression (see FIXME below)
-            if item.has_form("Times", 1, None):
+            if item.has_form("Times", 2, None):
                 if isinstance(item.elements[0], Number):
-                    neg = -item.elements[0]
-                    if neg.sameQ(Integer1):
-                        if len(item.elements) == 1:
-                            return neg
-                        else:
-                            return Expression(SymbolTimes, *item.elements[1:])
-                    else:
-                        return Expression(SymbolTimes, neg, *item.elements[1:])
+                    first, *rest = item.elements
+                    first = -first
+                    if first.sameQ(Integer1):
+                        if len(rest) == 1:
+                            return rest[0]
+                        return Expression(SymbolTimes, *rest)
+
+                    return Expression(SymbolTimes, first, *rest)
                 else:
                     return Expression(SymbolTimes, IntegerM1, *item.elements)
             elif isinstance(item, Number):
@@ -345,7 +340,7 @@ class Plus(BinaryOperator, SympyFunction):
         return eval_Plus(*items_tuple)
 
 
-class Power(BinaryOperator, MPMathFunction):
+class Power(InfixOperator, MPMathFunction):
     """
     <url>
     :Exponentiation:
@@ -431,14 +426,12 @@ class Power(BinaryOperator, MPMathFunction):
     }
 
     nargs = {2}
-    operator = "^"
-
     rules = {
         "Power[]": "1",
         "Power[x_]": "x",
     }
 
-    summary_text = "exponentiate"
+    summary_text = "exponentiate a number"
 
     # FIXME Note this is deprecated in 1.11
     # Remember to up sympy doc link when this is corrected
@@ -522,10 +515,10 @@ class Sqrt(SympyFunction):
         ),
     }
 
-    summary_text = "square root"
+    summary_text = "take the square root of a number"
 
 
-class Subtract(BinaryOperator):
+class Subtract(InfixOperator):
     """
     <url>
     :Subtraction:
@@ -551,15 +544,14 @@ class Subtract(BinaryOperator):
     attributes = A_LISTABLE | A_NUMERIC_FUNCTION | A_PROTECTED
     grouping = "Left"
 
-    operator = "-"
     rules = {
         "Subtract[x_, y_]": "Plus[x, Times[-1, y]]",
     }
 
-    summary_text = "subtract"
+    summary_text = "subtract from a number"
 
 
-class Times(BinaryOperator, SympyFunction):
+class Times(InfixOperator, SympyFunction):
     """
     <url>
     :Multiplication:
@@ -614,7 +606,6 @@ class Times(BinaryOperator, SympyFunction):
 
     formats = {}
 
-    operator = "*"
     operator_display = " "
 
     rules = {}
@@ -623,7 +614,7 @@ class Times(BinaryOperator, SympyFunction):
     # Remember to up sympy doc link when this is corrected
     sympy_name = "Mul"
 
-    summary_text = "multiply"
+    summary_text = "multiply a number"
 
     def format_times(self, items, evaluation, op="\u2062"):
         "Times[items__]"
@@ -641,6 +632,8 @@ class Times(BinaryOperator, SympyFunction):
                 return item
 
         items = items.get_sequence()
+        if len(items) < 2:
+            return
         positive = []
         negative = []
         for item in items:
@@ -685,15 +678,15 @@ class Times(BinaryOperator, SympyFunction):
         return result
 
     def format_inputform(self, items, evaluation):
-        "InputForm: Times[items__]"
+        "(InputForm,): Times[items__]"
         return self.format_times(items, evaluation, op="*")
 
     def format_standardform(self, items, evaluation):
-        "StandardForm: Times[items__]"
+        "(StandardForm,): Times[items__]"
         return self.format_times(items, evaluation, op=" ")
 
     def format_outputform(self, items, evaluation):
-        "OutputForm: Times[items__]"
+        "(OutputForm,): Times[items__]"
         return self.format_times(items, evaluation, op=" ")
 
     def eval(self, items, evaluation):

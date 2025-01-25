@@ -3,6 +3,7 @@
 File related evaluation functions.
 """
 
+import os
 from typing import Callable, Literal, Optional
 
 from mathics_scanner import TranslateError
@@ -11,12 +12,14 @@ from mathics_scanner.errors import IncompleteSyntaxError, InvalidSyntaxError
 import mathics
 import mathics.core.parser
 import mathics.core.streams
+from mathics.core.atoms import String
 from mathics.core.builtin import MessageException
 from mathics.core.convert.expression import to_expression, to_mathics_list
 from mathics.core.convert.python import from_python
 from mathics.core.evaluation import Evaluation
 from mathics.core.expression import BaseElement, Expression
 from mathics.core.parser import MathicsFileLineFeeder, MathicsMultiLineFeeder, parse
+from mathics.core.streams import stream_manager
 from mathics.core.symbols import Symbol, SymbolNull
 from mathics.core.systemsymbols import (
     SymbolEndOfFile,
@@ -26,11 +29,13 @@ from mathics.core.systemsymbols import (
     SymbolHoldExpression,
     SymbolPath,
     SymbolReal,
+    SymbolWord,
 )
 from mathics.core.util import canonic_filename
 from mathics.eval.files_io.read import (
     READ_TYPES,
     MathicsOpen,
+    close_stream,
     read_from_stream,
     read_get_separators,
 )
@@ -59,12 +64,52 @@ def print_line_number_and_text(line_number: int, text: str):
 GET_PRINT_FN: Callable = print_line_number_and_text
 
 
+def get_file_time(file) -> float:
+    """Return the last time that a file was accessed"""
+    try:
+        return os.stat(file).st_mtime
+    except OSError:
+        return 0
+
+
 def set_input_var(input_string: str):
     """
     Allow INPUT_VAR to get set, e.g. from main program.
     """
     global INPUT_VAR
     INPUT_VAR = canonic_filename(input_string)
+
+
+def eval_Close(obj, evaluation: Evaluation):
+    """
+    Closes a stream or socket `obj` which can be an 'InputStream' or
+    'OutputStream' object, or `SocketObject`. If there is only one
+    stream with a particular name, `obj` can be the string name, the
+    file path, of `obj`.
+    """
+
+    n = name = None
+    if obj.has_form(("InputStream", "OutputStream"), 2):
+        [name, n] = obj.elements
+        stream = stream_manager.lookup_stream(n.value)
+    elif isinstance(obj, String):
+        stream, channel = stream_manager.get_stream_and_channel_by_name(obj.value)
+        if stream is None:
+            if channel == -1:
+                evaluation.message("General", "openx", obj)
+            return
+        close_stream(stream, channel)
+        return obj
+    else:
+        stream = None
+
+    if stream is None or stream.io is None or stream.io.closed:
+        evaluation.message("General", "openx", obj)
+        return
+
+    if n is not None:
+        close_stream(stream, n.value)
+    return name
 
 
 def eval_Get(
@@ -128,13 +173,14 @@ def eval_Read(
     name: str, n: int, types: tuple, stream, evaluation: Evaluation, options: dict
 ):
     """
-    Evaluation method for Read[] and ReadList[]
+    Evaluation method for Read[] and ReadList[]. `name` will be either "Read" or
+    "ReadList" and is used in error messages
     """
     types = to_mathics_list(*types)
 
     for typ in types.elements:
         if typ not in READ_TYPES:
-            evaluation.message("Read", "readf", typ)
+            evaluation.message(name, "readf", typ)
             return SymbolFailed
 
     separators = read_get_separators(options, evaluation)
@@ -197,10 +243,10 @@ def eval_Read(
                     except Exception as e:
                         print(e)
 
-                if expr is SymbolEndOfFile:
-                    evaluation.message(
-                        "Read", "readt", tmp, to_expression("InputSteam", name, n)
-                    )
+                if expr is None:
+                    result.append(None)
+                elif expr is SymbolEndOfFile:
+                    evaluation.message(name, "readt", tmp, String(stream.name))
                     return SymbolFailed
                 elif isinstance(expr, BaseElement):
                     if typ is SymbolHoldExpression:
@@ -219,7 +265,7 @@ def eval_Read(
                         tmp = float(tmp)
                     except ValueError:
                         evaluation.message(
-                            "Read", "readn", to_expression("InputSteam", name, n)
+                            name, "readn", to_expression("InputSteam", name, n)
                         )
                         return SymbolFailed
                 result.append(tmp)
@@ -231,7 +277,7 @@ def eval_Read(
                     tmp = float(tmp)
                 except ValueError:
                     evaluation.message(
-                        "Read", "readn", to_expression("InputSteam", name, n)
+                        name, "readn", to_expression("InputSteam", name, n)
                     )
                     return SymbolFailed
                 result.append(tmp)
@@ -242,17 +288,42 @@ def eval_Read(
                 if len(tmp) == 0:
                     raise EOFError
                 result.append(tmp.rstrip("\n"))
-            elif typ is Symbol("Word"):
-                result.append(next(read_word))
+            elif typ is SymbolWord:
+                # next() for word tokens can return one or two words:
+                # the next word in the list and a following TokenWord
+                # match.  Therefore, test for this and do list-like
+                # appending here.
+
+                # THINK ABOUT: We might need to reconsider/refactor
+                # other cases to allow for multiple words as well. And
+                # for uniformity, we may want to redo the generators to
+                # always return *lists* instead instead of either a
+                # word or a list (which is always at most two words?)
+                words = next(read_word)
+                if not isinstance(words, list):
+                    words = [words]
+                result += words
 
         except EOFError:
             return SymbolEndOfFile
         except UnicodeDecodeError:
-            evaluation.message("General", "ucdec")
+            evaluation.message(name, "ucdec")
 
     if isinstance(result, Symbol):
         return result
-    if len(result) == 1:
-        return from_python(*result)
+    if isinstance(result, list):
+        result_len = len(result)
+        if result_len == 0:
+            if SymbolHoldExpression in types:
+                return Expression(SymbolHold, SymbolNull)
+        elif result_len == 2 and SymbolWord in types:
+            return [from_python(part) for part in result]
+        elif result_len == 1:
+            result = result[0]
+            if SymbolHoldExpression in types:
+                if hasattr(result, "head") and result.head is SymbolHold:
+                    return from_python(result)
+                else:
+                    return Expression(SymbolHold, from_python(result))
 
     return from_python(result)

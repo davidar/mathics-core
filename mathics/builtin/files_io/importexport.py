@@ -221,7 +221,6 @@ EXTENSIONMAPPINGS = {
     "*.csa": "HarwellBoeing",
     "*.cse": "HarwellBoeing",
     "*.css": "CSS",
-    "*.css": "CSS",
     "*.csv": "CSV",
     "*.ct": "SCT",
     "*.cua": "HarwellBoeing",
@@ -588,8 +587,6 @@ FORMATMAPPINGS = {
     "BYTE": "Byte",
     "BYU": "BYU",
     "BZ2": "BZIP2",
-    "BZ2": "BZIP2",
-    "BZIP": "BZIP2",
     "BZIP": "BZIP2",
     "BZIP2": "BZIP2",
     "C": "C",
@@ -796,7 +793,6 @@ FORMATMAPPINGS = {
     "PYTHONEXPRESSION": "PythonExpression",
     "QUICKTIME": "QuickTime",
     "RAW": "Raw",
-    "RAW": "Raw",
     "RAWBITMAP": "RawBitmap",
     "RAWJSON": "RawJSON",
     "REAL128": "Real128",
@@ -877,10 +873,8 @@ FORMATMAPPINGS = {
     "WARC": "WARC",
     "WAV": "WAV",
     "WAVE": "WAV",
-    "WAVE": "WAV",
     "WAVE64": "Wave64",
     "WDX": "WDX",
-    "WEBP": "WebP",
     "WEBP": "WebP",
     "WINDOWS/METAFILE": "WMF",
     "WLNET": "WLNet",
@@ -1326,8 +1320,14 @@ class Import(Builtin):
       <dt>'Import["$file$"]'
       <dd>imports data from a file.
 
+      <dt>'Import["$file$", "$fmt$"]'
+      <dd>imports file assuming the specified file format.
+
       <dt>'Import["$file$", $elements$]'
       <dd>imports the specified elements from a file.
+
+      <dt>'Import["$file$", {"$fmt$", $elements$}]'
+      <dd>imports the specified elements from a file assuming the specified file format.
 
       <dt>'Import["http://$url$", ...]' and 'Import["ftp://$url$", ...]'
       <dd>imports from a URL.

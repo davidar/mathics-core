@@ -61,7 +61,7 @@ build:
 # because pip install doesn't handle
 # INSTALL_REQUIRES properly
 #: Set up to run from the source tree
-develop:  mathics/data/op-tables.json mathics/data/operators.json
+develop:  mathics/data/op-tables.json mathics/data/operator-tables.json
 	$(PIP) install -e .[dev]
 
 # See note above on ./setup.py
@@ -142,9 +142,8 @@ latexdoc texdoc doc:
 	(cd mathics/doc/latex && $(MAKE) doc)
 
 #: Build JSON ASCII to unicode opcode table and operator table
-mathics/data/op-tables.json mathics/data/operators.json:
-	$(BASH) ./admin-tools/make-op-tables.sh
-
+mathics/data/operator-tables.json mathics/data/op-tables.json mathics/data/operators.json:
+	$(BASH) ./admin-tools/make-JSON-tables.sh
 
 #: Remove ChangeLog
 rmChangeLog:

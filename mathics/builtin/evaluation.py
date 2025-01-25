@@ -83,7 +83,7 @@ class IterationLimit(Predefined):
 
     Calculations terminated by '$IterationLimit' return '$Aborted':
 
-    > $IterationLimit
+    >> $IterationLimit
      = 1000
     """
 
@@ -116,8 +116,8 @@ class Hold(Builtin):
     <url>:WMA link:https://reference.wolfram.com/language/ref/Hold.html</url>
 
     <dl>
-    <dt>'Hold[$expr$]'
-        <dd>prevents $expr$ from being evaluated.
+      <dt>'Hold[$expr$]'
+      <dd>prevents $expr$ from being evaluated.
     </dl>
 
     >> Attributes[Hold]
@@ -133,9 +133,9 @@ class HoldComplete(Builtin):
     <url>:WMA link:https://reference.wolfram.com/language/ref/HoldComplete.html</url>
 
     <dl>
-    <dt>'HoldComplete[$expr$]'
-        <dd>prevents $expr$ from being evaluated, and also prevents
-        'Sequence' objects from being spliced into argument lists.
+      <dt>'HoldComplete[$expr$]'
+      <dd>prevents $expr$ from being evaluated, and also prevents \
+         'Sequence' objects from being spliced into argument lists.
     </dl>
 
     >> Attributes[HoldComplete]
@@ -308,3 +308,5 @@ class Sequence(Builtin):
     summary_text = (
         "a sequence of arguments that will automatically be spliced into any function"
     )
+
+    formats = {"Sequence[elems___]": "HoldForm[Sequence][elems]"}

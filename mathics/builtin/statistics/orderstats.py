@@ -17,16 +17,19 @@ from mpmath import ceil as mpceil, floor as mpfloor
 
 from mathics.algorithm.introselect import introselect
 from mathics.builtin.list.math import _RankedTakeLargest, _RankedTakeSmallest
-from mathics.core.atoms import Atom, Integer, Symbol, SymbolTrue
+from mathics.core.atoms import Atom, Integer, Integer1, SymbolTrue
+from mathics.core.attributes import A_PROTECTED, A_READ_PROTECTED
 from mathics.core.builtin import Builtin
 from mathics.core.expression import Evaluation, Expression
 from mathics.core.list import ListExpression
 from mathics.core.symbols import SymbolFloor, SymbolPlus, SymbolTimes
-from mathics.core.systemsymbols import SymbolSubtract
+from mathics.core.systemsymbols import (
+    SymbolRankedMax,
+    SymbolRankedMin,
+    SymbolSort,
+    SymbolSubtract,
+)
 from mathics.eval.numerify import numerify
-
-SymbolRankedMax = Symbol("RankedMax")
-SymbolRankedMin = Symbol("RankedMin")
 
 
 class Quantile(Builtin):
@@ -85,13 +88,23 @@ class Quantile(Builtin):
         "nquan": "The quantile `1` has to be between 0 and 1.",
     }
 
+    attributes = A_PROTECTED | A_READ_PROTECTED
     rules = {
         "Quantile[list_List, q_, abcd_]": "Quantile[list, {q}, abcd]",
         "Quantile[list_List, q_]": "Quantile[list, q, {{0, 0}, {1, 0}}]",
     }
     summary_text = "cut points dividing the range of a probability distribution into continuous intervals"
 
-    def eval(self, data, qs, a, b, c, d, evaluation: Evaluation):
+    def eval(
+        self,
+        data: ListExpression,
+        qs: ListExpression,
+        a,
+        b,
+        c,
+        d,
+        evaluation: Evaluation,
+    ):
         """Quantile[data_List, qs_List, {{a_, b_}, {c_, d_}}]"""
 
         n = len(data.elements)
@@ -100,7 +113,9 @@ class Quantile(Builtin):
         def ranked(i):
             return introselect(partially_sorted, min(max(0, i - 1), n - 1))
 
-        numeric_qs = numerify(qs.evaluate(evaluation), evaluation)
+        numeric_qs = qs.evaluate(evaluation)
+        if numeric_qs is not None:
+            numeric_qs = numerify(numeric_qs, evaluation)
         results = []
 
         for q in numeric_qs.elements:
@@ -170,6 +185,7 @@ class Quartiles(Builtin):
      = {27 / 4, 13, 77 / 4}
     """
 
+    attributes = A_PROTECTED | A_READ_PROTECTED
     rules = {
         "Quartiles[list_List]": "Quantile[list, {1/4, 1/2, 3/4}, {{1/2, 0}, {0, 1}}]",
     }
@@ -194,6 +210,7 @@ class RankedMax(Builtin):
         "intpm": "Expected positive integer at position 2 in ``.",
         "rank": "The specified rank `1` is not between 1 and `2`.",
     }
+    attributes = A_PROTECTED | A_READ_PROTECTED
     summary_text = "the n-th largest item"
 
     def eval(self, element, n: Integer, evaluation: Evaluation):
@@ -231,6 +248,7 @@ class RankedMin(Builtin):
         "intpm": "Expected positive integer at position 2 in ``.",
         "rank": "The specified rank `1` is not between 1 and `2`.",
     }
+    attributes = A_PROTECTED | A_READ_PROTECTED
     summary_text = "the n-th smallest item"
 
     def eval(self, element, n: Integer, evaluation: Evaluation):
@@ -244,6 +262,43 @@ class RankedMin(Builtin):
             evaluation.message("RankedMin", "rank", py_n, len(element.elements))
         else:
             return introselect(element.get_mutable_elements(), py_n - 1)
+
+
+class ReverseSort(Builtin):
+    """
+    <url>:WMA link:https://reference.wolfram.com/language/ref/ReverseSort.html</url>
+
+    <dl>
+      <dt>'ReverseSort[$list$]'
+      <dd>sorts $list$ (or the elements of any other expression) according \
+          to reverse canonical ordering.
+
+      <dt>'ReverseSort[$list$, $p$]'
+      <dd>sorts using $p$ to determine the order of two elements.
+    </dl>
+
+    >> ReverseSort[{c, b, d, a}]
+     = {d, c, b, a}
+
+    You can specify a binary comparison function:
+    >> ReverseSort[{1, 2, 0, 3}, Less]
+     = {3, 2, 1, 0}
+
+    Using 'Greater' for the above, reverses the reverse sort:
+    >> ReverseSort[{1, 2, 0, 3}, Greater]
+     = {0, 1, 2, 3}
+
+    See also <url>:Sort:
+    /doc/reference-of-built-in-symbols/descriptive-statistics/order-statistics/sort/</url>.
+    """
+
+    attributes = A_PROTECTED
+    summary_text = "sort in reverse order"
+
+    rules = {
+        "ReverseSort[list_]": "Reverse[Sort[list]]",
+        "ReverseSort[list_, p_]": "Reverse[Sort[list, p]]",
+    }
 
 
 class Sort(Builtin):
@@ -274,15 +329,19 @@ class Sort(Builtin):
      = {2 + c_, 1 + b__}
     >> Sort[{x_ + n_*y_, x_ + y_}, PatternsOrderedQ]
      = {x_ + n_ y_, x_ + y_}
+
+    See also <url>:ReverseSort:
+    /doc/reference-of-built-in-symbols/descriptive-statistics/order-statistics/reversesort/</url>.
     """
 
-    summary_text = "sort lexicographically or with any comparison function"
+    attributes = A_PROTECTED
+    summary_text = "sort lexicographically or with a comparison function"
 
     def eval(self, list, evaluation: Evaluation):
         "Sort[list_]"
 
         if isinstance(list, Atom):
-            evaluation.message("Sort", "normal")
+            evaluation.message("Sort", "normal", Integer1, Expression(SymbolSort, list))
         else:
             new_elements = sorted(list.elements)
             return list.restructure(list.head, new_elements, evaluation)
@@ -291,7 +350,7 @@ class Sort(Builtin):
         "Sort[list_, p_]"
 
         if isinstance(list, Atom):
-            evaluation.message("Sort", "normal")
+            evaluation.message("Sort", "normal", Integer1, Expression(SymbolSort, list))
         else:
 
             class Key:
@@ -300,10 +359,8 @@ class Sort(Builtin):
 
                 def __gt__(self, other):
                     return (
-                        not Expression(p, self.element, other.element).evaluate(
-                            evaluation
-                        )
-                        is SymbolTrue
+                        Expression(p, self.element, other.element).evaluate(evaluation)
+                        is not SymbolTrue
                     )
 
             new_elements = sorted(list.elements, key=Key)
@@ -334,6 +391,7 @@ class TakeLargest(_RankedTakeLargest):
      = {Missing[abc], 150}
     """
 
+    attributes = A_PROTECTED
     summary_text = "sublist of n largest elements"
 
     def eval(self, element, n, evaluation, options):
@@ -356,6 +414,7 @@ class TakeSmallest(_RankedTakeSmallest):
      = {-1, 10}
     """
 
+    attributes = A_PROTECTED
     summary_text = "sublist of n smallest elements"
 
     def eval(self, element, n, evaluation, options):
